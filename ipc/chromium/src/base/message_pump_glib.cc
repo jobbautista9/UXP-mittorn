@@ -11,7 +11,9 @@
 #ifdef OS_SOLARIS
 #include <unistd.h>
 #endif
+#if defined(MOZ_WIDGET_GTK)
 #include <gtk/gtk.h>
+#endif
 #include <glib.h>
 
 #include "base/eintr_wrapper.h"
@@ -152,12 +154,16 @@ MessagePumpForUI::MessagePumpForUI()
   // This is needed to allow Run calls inside Dispatch.
   g_source_set_can_recurse(work_source_, TRUE);
   g_source_attach(work_source_, context_);
+#if defined(MOZ_WIDGET_GTK)
   gdk_event_handler_set(&EventDispatcher, this, NULL);
+#endif
 }
 
 MessagePumpForUI::~MessagePumpForUI() {
+#if defined(MOZ_WIDGET_GTK)
   gdk_event_handler_set(reinterpret_cast<GdkEventFunc>(gtk_main_do_event),
                         this, NULL);
+#endif
   g_source_destroy(work_source_);
   g_source_unref(work_source_);
   close(wakeup_pipe_read_);
@@ -349,7 +355,9 @@ void MessagePumpForUI::EventDispatcher(GdkEvent* event, gpointer data) {
     if (!message_pump->state_->dispatcher->Dispatch(event))
       message_pump->state_->should_quit = true;
   } else {
+#if defined(MOZ_WIDGET_GTK)
     gtk_main_do_event(event);
+#endif
   }
   message_pump->DidProcessEvent(event);
 }
