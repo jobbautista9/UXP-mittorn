@@ -44,6 +44,8 @@
 #include "gfxPlatformGtk.h"
 #elif defined(ANDROID)
 #include "gfxAndroidPlatform.h"
+#else
+#include "gfxPlatformNone.h"
 #endif
 
 #ifdef XP_WIN
@@ -577,7 +579,7 @@ gfxPlatform::Init()
 #elif defined(ANDROID)
     gPlatform = new gfxAndroidPlatform;
 #else
-    #error "No gfxPlatform implementation available"
+    gPlatform = new gfxPlatformNone;
 #endif
     gPlatform->InitAcceleration();
 
