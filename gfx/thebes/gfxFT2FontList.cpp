@@ -8,26 +8,26 @@
 #include "mozilla/MemoryReporting.h"
 
 #include "mozilla/dom/ContentChild.h"
-#include "gfxAndroidPlatform.h"
 #include "mozilla/Omnijar.h"
 #include "mozilla/UniquePtr.h"
 #include "mozilla/UniquePtrExtensions.h"
 #include "nsIInputStream.h"
-#define gfxToolkitPlatform gfxAndroidPlatform
 
 #include "nsXULAppAPI.h"
 #include <dirent.h>
-#include <android/log.h>
-#define ALOG(args...)  __android_log_print(ANDROID_LOG_INFO, "Gecko" , ## args)
+#define ALOG(args...)  fprintf(stderr, ## args)
 
 #include "ft2build.h"
 #include FT_FREETYPE_H
 #include FT_TRUETYPE_TAGS_H
 #include FT_TRUETYPE_TABLES_H
+#include FT_MODULE_H
+
 #include "cairo-ft.h"
 
 #include "gfxFT2FontList.h"
 #include "gfxFT2Fonts.h"
+#include "gfxFT2Utils.h"
 #include "gfxUserFontSet.h"
 #include "gfxFontUtils.h"
 
@@ -59,6 +59,33 @@ static LazyLogModule sFontInfoLog("fontInfoLog");
 #define LOG_ENABLED() MOZ_LOG_TEST(sFontInfoLog, mozilla::LogLevel::Debug)
 
 static cairo_user_data_key_t sFTUserFontDataKey;
+extern "C" {
+    static void* ft_alloc(FT_Memory, long size) {
+        return malloc(size);
+    }
+    static void ft_free(FT_Memory, void* block) {
+        free(block);
+    }
+    static void* ft_realloc(FT_Memory, long cur_size, long new_size, void* block) {
+        return realloc(block, new_size);
+    }
+};
+static FT_MemoryRec_ gFTMemory = { nullptr, ft_alloc, ft_free, ft_realloc };
+
+static FT_Library
+GetFTLibrary()
+{
+    static FT_Library sCairoFTLibrary;
+
+    if (!sCairoFTLibrary) {
+    
+        FT_New_Library(&gFTMemory, &sCairoFTLibrary);
+        FT_Add_Default_Modules(sCairoFTLibrary);
+    }
+
+    return sCairoFTLibrary;
+}
+
 
 static __inline void
 BuildKeyNameFromFontName(nsAString &aName)
@@ -85,7 +112,7 @@ public:
 
         NS_ASSERTION(!aFontEntry->mFilename.IsEmpty(),
                      "can't use AutoFTFace for fonts without a filename");
-        FT_Library ft = gfxToolkitPlatform::GetPlatform()->GetFTLibrary();
+        FT_Library ft = GetFTLibrary();
 
         // A relative path (no initial "/") means this is a resource in
         // omnijar, not an installed font on the device.
@@ -256,7 +283,7 @@ FT2FontEntry::CreateFontEntry(const nsAString& aFontName,
     // eventually deleted.
     FT_Face face;
     FT_Error error =
-        FT_New_Memory_Face(gfxToolkitPlatform::GetPlatform()->GetFTLibrary(),
+        FT_New_Memory_Face(GetFTLibrary(),
                            aFontData, aLength, 0, &face);
     if (error != FT_Err_Ok) {
         free((void*)aFontData);
@@ -970,7 +997,7 @@ gfxFT2FontList::AppendFacesFromFontFile(const nsCString& aFileName,
         return;
     }
 
-    FT_Library ftLibrary = gfxAndroidPlatform::GetPlatform()->GetFTLibrary();
+    FT_Library ftLibrary = GetFTLibrary();
     FT_Face dummy;
     if (FT_Err_Ok == FT_New_Face(ftLibrary, aFileName.get(), -1, &dummy)) {
         LOG(("reading font info via FreeType for %s", aFileName.get()));
@@ -1122,7 +1149,7 @@ gfxFT2FontList::AppendFacesFromOmnijarEntry(nsZipArchive* aArchive,
         return;
     }
 
-    FT_Library ftLibrary = gfxAndroidPlatform::GetPlatform()->GetFTLibrary();
+    FT_Library ftLibrary = GetFTLibrary();
 
     FT_Face dummy;
     if (FT_Err_Ok != FT_New_Memory_Face(ftLibrary, buf.get(), bufSize, 0, &dummy)) {
@@ -1215,13 +1242,14 @@ gfxFT2FontList::FindFonts()
     // ANDROID_ROOT is the root of the android system, typically /system;
     // font files are in /$ANDROID_ROOT/fonts/
     nsCString root;
-    char *androidRoot = PR_GetEnv("ANDROID_ROOT");
-    if (androidRoot) {
-        root = androidRoot;
+
+    char *envRoot = PR_GetEnv("MOZ_FONTS_DIR");
+    if (envRoot) {
+        root = envRoot;
     } else {
-        root = NS_LITERAL_CSTRING("/system");
+        root = NS_LITERAL_CSTRING("/usr/share/fonts/liberation-fonts");
     }
-    root.AppendLiteral("/fonts");
+
 
     FindFontsInDir(root, mFontNameCache.get(), FT2FontFamily::kVisible);
 
@@ -1307,7 +1335,8 @@ gfxFT2FontList::FindFontsInDir(const nsCString& aDir,
         "MTLc3m.ttf",
         "NanumGothic.ttf",
         "DroidSansJapanese.ttf",
-        "DroidSansFallback.ttf"
+        "DroidSansFallback.ttf",
+        "LiberationSans-Regular.ttf"
     };
 
     DIR *d = opendir(aDir.get());
