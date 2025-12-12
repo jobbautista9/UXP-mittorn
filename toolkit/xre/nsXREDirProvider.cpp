@@ -6,6 +6,7 @@
 #include "nsAppRunner.h"
 #include "nsToolkitCompsCID.h"
 #include "nsXREDirProvider.h"
+#include "GeckoProfiler.h"
 
 #include "jsapi.h"
 #include "xpcpublic.h"
