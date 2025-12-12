@@ -4,6 +4,8 @@
 
 #define _BSD_SOURCE /* for snprintf() */
 #include "cairoint.h"
+#include "cairo.h"
+#if CAIRO_HAS_PDF_SURFACE
 #include "cairo-pdf.h"
 #include "cairo-pdf-surface-private.h"
 #include "cairo-pdf-operators-private.h"
@@ -6211,3 +6213,4 @@ cairo_pdf_surface_paginated_backend = {
     _cairo_pdf_surface_has_fallback_images,
     _cairo_pdf_surface_supports_fine_grained_fallbacks,
 };
+#endif
