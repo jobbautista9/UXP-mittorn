@@ -129,6 +129,12 @@ if os_bsd or os_linux or os_solaris:
         SOURCES += [
             'src/base/message_pump_glib.cc',
         ]
+# android message pump does not have external dependencies,
+# but requires callbacks in nsAppShell
+if 'none' in CONFIG['MOZ_WIDGET_TOOLKIT']:
+    SOURCES += [
+       'src/base/message_pump_android.cc',
+    ]
 
 if os_solaris:
     SOURCES += [

@@ -2152,6 +2152,10 @@ dnl ========================================================
 
 case "$MOZ_WIDGET_TOOLKIT" in
 
+none)
+    USE_FREETYPE_FT2=1
+    ;;
+
 gtk3)
     USE_FC_FREETYPE=1
     ;;
@@ -4284,7 +4288,7 @@ fi
 
 AC_SUBST_LIST(GLIB_GMODULE_LIBS)
 
-if test "$USE_FC_FREETYPE"; then
+if test "$USE_FC_FREETYPE" || test "$USE_FREETYPE_FT2"; then
     if test "$COMPILE_ENVIRONMENT"; then
         dnl ========================================================
         dnl = Check for freetype2 and its functionality
@@ -4320,20 +4324,23 @@ if test "$USE_FC_FREETYPE"; then
             CFLAGS="$_SAVE_CFLAGS"
         fi
 
-        _SAVE_CPPFLAGS="$CPPFLAGS"
-        CPPFLAGS="$CPPFLAGS $FT2_CFLAGS $XCFLAGS"
-        MOZ_CHECK_HEADERS([fontconfig/fcfreetype.h], ,
-            [AC_MSG_ERROR(Can't find header fontconfig/fcfreetype.h.)], [#include <fontconfig/fontconfig.h>])
-        CPPFLAGS="$_SAVE_CPPFLAGS"
-    else
+        if test "$USE_FC_FREETYPE"; then
+            _SAVE_CPPFLAGS="$CPPFLAGS"
+            CPPFLAGS="$CPPFLAGS $FT2_CFLAGS $XCFLAGS"
+            MOZ_CHECK_HEADERS([fontconfig/fcfreetype.h], ,
+                [AC_MSG_ERROR(Can't find header fontconfig/fcfreetype.h.)], [#include <fontconfig/fontconfig.h>])
+            CPPFLAGS="$_SAVE_CPPFLAGS"
+        fi
+    elif test "$USE_FC_FREETYPE"; then
         AC_DEFINE(HAVE_FONTCONFIG_FCFREETYPE_H)
     fi
-
-    PKG_CHECK_MODULES(_FONTCONFIG, fontconfig >= $FONTCONFIG_VERSION,
-    [
-        FT2_CFLAGS="$FT2_CFLAGS $_FONTCONFIG_CFLAGS"
-        FT2_LIBS="$FT2_LIBS $_FONTCONFIG_LIBS"
-    ])
+    if test "$USE_FC_FREETYPE"; then
+        PKG_CHECK_MODULES(_FONTCONFIG, fontconfig >= $FONTCONFIG_VERSION,
+        [
+            FT2_CFLAGS="$FT2_CFLAGS $_FONTCONFIG_CFLAGS"
+            FT2_LIBS="$FT2_LIBS $_FONTCONFIG_LIBS"
+        ])
+    fi
 fi
 
 dnl ========================================================

@@ -5,7 +5,7 @@
 
 toolkit = CONFIG['MOZ_WIDGET_TOOLKIT']
 
-if toolkit in ('cocoa', 'uikit'):
+if toolkit in ('cocoa', 'uikit', 'none'):
     DIRS += [toolkit]
 
 if toolkit in ('gtk2', 'gtk3'):
@@ -228,7 +228,7 @@ if toolkit in ('cocoa', 'windows'):
         'nsBaseClipboard.cpp',
     ]
 
-if toolkit in {'gtk2', 'gtk3', 'cocoa', 'windows', 'uikit'}:
+if toolkit in {'gtk2', 'gtk3', 'cocoa', 'windows', 'uikit', 'none'}:
     UNIFIED_SOURCES += ['nsBaseFilePicker.cpp']
 
 if toolkit in ('gtk2', 'gtk3', 'windows', 'cocoa'):
