@@ -151,8 +151,21 @@ CreateSurfaceForWindow(nsIWidget* widget, const EGLConfig& config) {
     EGLSurface newSurface = nullptr;
 
     MOZ_ASSERT(widget);
-    newSurface = sEGLLibrary.fCreateWindowSurface(EGL_DISPLAY(), config,
-                                                  GET_NATIVE_WINDOW(widget), 0);
+    auto nWidget = GET_NATIVE_WINDOW(widget);
+    if (nWidget) {
+        newSurface = sEGLLibrary.fCreateWindowSurface(EGL_DISPLAY(), config, nWidget, 0);
+    }
+    else {
+        auto bounds = widget->GetBounds();
+
+        const EGLint pbufferAttribs[] = {
+            LOCAL_EGL_WIDTH, bounds.width,
+            LOCAL_EGL_HEIGHT, bounds.height,
+            LOCAL_EGL_NONE, LOCAL_EGL_NONE
+        };
+ 
+        newSurface = sEGLLibrary.fCreatePbufferSurface(EGL_DISPLAY(), config, pbufferAttribs);
+    }
     return newSurface;
 }
 
@@ -611,6 +624,11 @@ CreateConfig(EGLConfig* aConfig, int32_t depth, nsIWidget* aWidget)
         default:
             NS_ERROR("Unknown pixel depth");
             return false;
+    }
+
+    // if platform native window is missing, create pbuffer
+    if (!GET_NATIVE_WINDOW(aWidget)) {
+        attribs = kEGLConfigAttribsOffscreenPBuffer;
     }
 
     if (!sEGLLibrary.fChooseConfig(EGL_DISPLAY(), attribs,
