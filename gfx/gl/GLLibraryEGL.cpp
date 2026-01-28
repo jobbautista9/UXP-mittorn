@@ -49,7 +49,8 @@ static const char* sEGLExtensionNames[] = {
     "EGL_KHR_image",
     "EGL_KHR_fence_sync",
     "EGL_ANGLE_platform_angle",
-    "EGL_ANGLE_platform_angle_d3d"
+    "EGL_ANGLE_platform_angle_d3d",
+    "EGL_EXT_platform_base"
 };
 
 #ifdef XP_WIN
@@ -391,6 +392,24 @@ GLLibraryEGL::EnsureInitialized(bool forceAccel, nsACString* const out_failureId
             mSymbols.fGetPlatformDisplayEXT = nullptr;
         }
     }
+    else if(IsExtensionSupported(EXT_platform_base))
+    {
+        GLLibraryLoader::SymLoadStruct platformSymbols[] = {
+            { (PRFuncPtr*)&mSymbols.fGetPlatformDisplayEXT,   { "eglGetPlatformDisplayEXT", nullptr } },
+            { nullptr, { nullptr } }
+        };
+
+        bool success = GLLibraryLoader::LoadSymbols(mEGLLibrary,
+                                                    &platformSymbols[0],
+                                                    lookupFunction);
+        if (!success) {
+            NS_ERROR("EGL supports EXT_platform_base exposing its functions!");
+
+            MarkExtensionUnsupported(EXT_platform_base);
+
+            mSymbols.fGetPlatformDisplayEXT = nullptr;
+        }
+    }
 
     // Check the ANGLE support the system has
     nsCOMPtr<nsIGfxInfo> gfxInfo = do_GetService("@mozilla.org/gfx/info;1");
@@ -431,7 +450,16 @@ GLLibraryEGL::EnsureInitialized(bool forceAccel, nsACString* const out_failureId
             mIsWARP = true;
         }
     } else {
-        chosenDisplay = GetAndInitDisplay(*this, EGL_DEFAULT_DISPLAY);
+        if (mEGLPlatform && mSymbols.fGetPlatformDisplayEXT) {
+            chosenDisplay = fGetPlatformDisplayEXT(mEGLPlatform, mNativeDisplay, mEGLPlatformDisplayAttribs);
+            if(chosenDisplay) {
+                if(!fInitialize(chosenDisplay, nullptr, nullptr))
+                    chosenDisplay = nullptr;
+            }
+        }
+        if (!chosenDisplay) {
+            chosenDisplay = GetAndInitDisplay(*this, mNativeDisplay);
+        }
     }
 
     if (!chosenDisplay) {

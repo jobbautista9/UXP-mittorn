@@ -89,6 +89,9 @@ public:
         : mInitialized(false),
           mEGLLibrary(nullptr),
           mEGLDisplay(EGL_NO_DISPLAY),
+          mNativeDisplay(EGL_DEFAULT_DISPLAY),
+          mEGLPlatformDisplayAttribs(nullptr),
+          mEGLPlatform(0),
           mIsANGLE(false),
           mIsWARP(false)
     {
@@ -159,6 +162,7 @@ public:
         KHR_fence_sync,
         ANGLE_platform_angle,
         ANGLE_platform_angle_d3d,
+        EXT_platform_base,
         Extensions_Max
     };
 
@@ -636,11 +640,27 @@ public:
     void UnsetCachedCurrentContext() {}
     void SetCachedCurrentContext(EGLContext aCtx) { }
     bool CachedCurrentContextMatches() { return true; }
+    void SetNativeDisplay(EGLNativeDisplayType aType) {
+        mNativeDisplay = aType;
+    }
+    void SetEGLPlatform(EGLenum aPlatform) {
+        mEGLPlatform = aPlatform;
+    }
+    void SetEGLPlatformAttribs(const EGLint *aAttribs) {
+        mEGLPlatformDisplayAttribs = aAttribs;
+    }
+    bool IsInitialized() {
+        return mInitialized;
+    }
 
 private:
     bool mInitialized;
     PRLibrary* mEGLLibrary;
     EGLDisplay mEGLDisplay;
+    EGLNativeDisplayType mNativeDisplay;
+    const EGLint *mEGLPlatformDisplayAttribs;
+    EGLenum mEGLPlatform;
+
     RefPtr<GLContext> mReadbackGL;
 
     bool mIsANGLE;

@@ -708,9 +708,18 @@ already_AddRefed<GLContext>
 GLContextProviderEGL::CreateForWindow(nsIWidget* aWidget, bool aForceAccelerated)
 {
     nsCString discardFailureId;
-    if (!sEGLLibrary.EnsureInitialized(false, &discardFailureId)) {
-        MOZ_CRASH("GFX: Failed to load EGL library 3!\n");
-        return nullptr;
+
+    if(!sEGLLibrary.IsInitialized())
+    {
+        sEGLLibrary.SetNativeDisplay((EGLNativeDisplayType)aWidget->GetNativeData(NS_NATIVE_DISPLAY));
+        sEGLLibrary.SetEGLPlatform((EGLenum)(uintptr_t)aWidget->GetNativeData(NS_NATIVE_EGL_PLATFORM));
+        sEGLLibrary.SetEGLPlatformAttribs(
+          (const EGLint*)aWidget->GetNativeData(NS_NATIVE_EGL_PLATFORM_DISPLAY_ATTRIB_LIST));
+
+        if (!sEGLLibrary.EnsureInitialized(false, &discardFailureId)) {
+            MOZ_CRASH("GFX: Failed to load EGL library 3!\n");
+            return nullptr;
+        }
     }
 
     bool doubleBuffered = true;
