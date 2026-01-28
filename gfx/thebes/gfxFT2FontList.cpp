@@ -1321,6 +1321,12 @@ gfxFT2FontList::FindFontsInDir(const nsCString& aDir,
                                FT2FontFamily::Visibility aVisibility)
 {
     static const char* sStandardFonts[] = {
+        "LiberationSans-Regular.ttf",
+        "LiberationSans-Bold.ttf",
+        "LiberationSerif-Regular.ttf",
+        "LiberationSerif-Bold.ttf",
+        "LiberationSerif-BoldItalic.ttf",
+        "LiberationMono-Regular.ttf",
         "DroidSans.ttf",
         "DroidSans-Bold.ttf",
         "DroidSerif-Regular.ttf",
@@ -1336,7 +1342,6 @@ gfxFT2FontList::FindFontsInDir(const nsCString& aDir,
         "NanumGothic.ttf",
         "DroidSansJapanese.ttf",
         "DroidSansFallback.ttf",
-        "LiberationSans-Regular.ttf"
     };
 
     DIR *d = opendir(aDir.get());

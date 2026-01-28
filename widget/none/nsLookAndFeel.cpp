@@ -4,351 +4,404 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "nsLookAndFeel.h"
-#include "nsStyleConsts.h"
 #include "gfxFont.h"
 #include "gfxFontConstants.h"
+#include "nsPrintfCString.h"
+#include "nsStyleConsts.h"
 
-nsLookAndFeel::nsLookAndFeel()
-    : nsXPLookAndFeel()
-{
-}
+nsLookAndFeel::nsLookAndFeel() : nsXPLookAndFeel() {}
 
-nsLookAndFeel::~nsLookAndFeel()
-{
-}
+nsLookAndFeel::~nsLookAndFeel() {}
 
+// this matches wine and gtk2 redmond themes
+// and very near to gtk2's default raleigh
+#define BASE_ACTIVE_COLOR NS_RGB(0xd4, 0xd0, 0xc8)
+#define BASE_NORMAL_COLOR NS_RGB(0xff, 0xff, 0xff)
+#define BASE_SELECTED_COLOR NS_RGB(0x00, 0x24, 0x68)
+#define BG_ACTIVE_COLOR NS_RGB(0xff, 0xff, 0xff)
+#define BG_INSENSITIVE_COLOR NS_RGB(0xd4, 0xd0, 0xc8)
+#define BG_NORMAL_COLOR NS_RGB(0xd4, 0xd0, 0xc8)
+#define BG_PRELIGHT_COLOR NS_RGB(0xee, 0xee, 0xee)
+#define BG_SELECTED_COLOR NS_RGB(0x00, 0x24, 0x68)
+#define DARK_NORMAL_COLOR NS_RGB(0x8D, 0x8A, 0x85)
+#define FG_INSENSITIVE_COLOR NS_RGB(0x80, 0x80, 0x80)
+#define FG_NORMAL_COLOR NS_RGB(0x00, 0x00, 0x00)
+#define FG_PRELIGHT_COLOR NS_RGB(0x44, 0x44, 0x44)
+#define FG_SELECTED_COLOR NS_RGB(0xFF, 0xFF, 0xFF)
+#define LIGHT_NORMAL_COLOR NS_RGB(0xFF, 0xFF, 0xFF)
+#define TEXT_ACTIVE_COLOR NS_RGB(0x30, 0x30, 0x30)
+#define TEXT_NORMAL_COLOR NS_RGB(0x00, 0x00, 0x00)
+#define TEXT_SELECTED_COLOR NS_RGB(0xFF, 0xFF, 0xFF)
+#define BLACK_COLOR NS_RGB(0x00, 0x00, 0x00)
+#define DARK_GRAY_COLOR NS_RGB(0x40, 0x40, 0x40)
+#define GRAY_COLOR NS_RGB(0x80, 0x80, 0x80)
+#define LIGHT_GRAY_COLOR NS_RGB(0xa0, 0xa0, 0xa0)
+#define RED_COLOR NS_RGB(0xff, 0x00, 0x00)
+#define BLUE_COLOR NS_RGB(0x00, 0x00, 0xff)
+#define TOOLTIP_COLOR NS_RGB(0xff, 0xff, 0xdc)
 
-nsresult
-nsLookAndFeel::NativeGetColor(const ColorID aID, nscolor &aResult)
-{
-  nsresult res = NS_OK;
+nsresult nsLookAndFeel::NativeGetColor(const ColorID aID, nscolor &aColor) {
 
+  nsresult rv = NS_OK;
   switch (aID) {
     case eColorID_WindowBackground:
-      aResult = NS_RGB(0xff,0xff,0xff);
+      aColor = BASE_NORMAL_COLOR;
       break;
     case eColorID_WindowForeground:
-      aResult = NS_RGB(0x00,0x00,0x00);
+      aColor = TEXT_NORMAL_COLOR;
       break;
     case eColorID_WidgetBackground:
-      aResult = NS_RGB(0xdd,0xdd,0xdd);
+      aColor = BG_NORMAL_COLOR;
       break;
     case eColorID_WidgetForeground:
-      aResult = NS_RGB(0x00,0x00,0x00);
+      aColor = FG_NORMAL_COLOR;
       break;
     case eColorID_WidgetSelectBackground:
-      aResult = NS_RGB(0x80,0x80,0x80);
+      aColor = BG_SELECTED_COLOR;
       break;
     case eColorID_WidgetSelectForeground:
-      aResult = NS_RGB(0x00,0x00,0x80);
+      aColor = FG_SELECTED_COLOR;
       break;
     case eColorID_Widget3DHighlight:
-      aResult = NS_RGB(0xa0,0xa0,0xa0);
+      aColor = LIGHT_GRAY_COLOR;
       break;
     case eColorID_Widget3DShadow:
-      aResult = NS_RGB(0x40,0x40,0x40);
+      aColor = DARK_GRAY_COLOR;
       break;
     case eColorID_TextBackground:
-      aResult = NS_RGB(0xff,0xff,0xff);
+      // not used?
+      aColor = BASE_NORMAL_COLOR;
       break;
     case eColorID_TextForeground:
-      aResult = NS_RGB(0x00,0x00,0x00);
+      // not used?
+      aColor = TEXT_NORMAL_COLOR;
       break;
     case eColorID_TextSelectBackground:
-    case eColorID_highlight: // CSS2 color
-      aResult = NS_RGB(0xaa,0xaa,0xaa);
-      break;
-    case eColorID__moz_menuhover:
-      aResult = NS_RGB(0xee,0xee,0xee);
-      break;
-    case eColorID_TextSelectForeground:
-    case eColorID_highlighttext:  // CSS2 color
-    case eColorID__moz_menuhovertext:
-      GetColor(eColorID_TextSelectBackground, aResult);
-      if (aResult == 0x000000)
-        aResult = NS_RGB(0xff,0xff,0xff);
-      else
-        aResult = NS_DONT_CHANGE_COLOR;
-      break;
     case eColorID_IMESelectedRawTextBackground:
     case eColorID_IMESelectedConvertedTextBackground:
-    case eColorID_IMERawInputBackground:
-    case eColorID_IMEConvertedTextBackground:
-      aResult = NS_TRANSPARENT;
+      // still used
+      aColor = BASE_SELECTED_COLOR;
       break;
+    case eColorID_TextSelectForeground:
     case eColorID_IMESelectedRawTextForeground:
     case eColorID_IMESelectedConvertedTextForeground:
+      // still used
+      aColor = TEXT_SELECTED_COLOR;
+      break;
+    case eColorID_IMERawInputBackground:
+    case eColorID_IMEConvertedTextBackground:
+      aColor = NS_TRANSPARENT;
+      break;
     case eColorID_IMERawInputForeground:
     case eColorID_IMEConvertedTextForeground:
-      aResult = NS_SAME_AS_FOREGROUND_COLOR;
+      aColor = NS_SAME_AS_FOREGROUND_COLOR;
       break;
     case eColorID_IMERawInputUnderline:
     case eColorID_IMEConvertedTextUnderline:
-      aResult = NS_40PERCENT_FOREGROUND_COLOR;
+      aColor = NS_SAME_AS_FOREGROUND_COLOR;
       break;
     case eColorID_IMESelectedRawTextUnderline:
     case eColorID_IMESelectedConvertedTextUnderline:
-      aResult = NS_SAME_AS_FOREGROUND_COLOR;
+      aColor = NS_TRANSPARENT;
       break;
     case eColorID_SpellCheckerUnderline:
-      aResult = NS_RGB(0xff, 0, 0);
+      aColor = RED_COLOR;
       break;
 
-    //
-    // css2 system colors http://www.w3.org/TR/REC-CSS2/ui.html#system-colors
-    //
-    case eColorID_buttontext:
-    case eColorID__moz_buttonhovertext:
-    case eColorID_captiontext:
-    case eColorID_menutext:
-    case eColorID_infotext:
-    case eColorID__moz_menubartext:
-    case eColorID_windowtext:
-      aResult = 0;
+      // css2  http://www.w3.org/TR/REC-CSS2/ui.html#system-colors
+    case eColorID_activeborder:
+      // active window border
+      aColor = BG_NORMAL_COLOR;
       break;
     case eColorID_activecaption:
-      aResult = NS_RGB(0xff,0xff,0xff);
+      // active window caption background
+      aColor = BG_NORMAL_COLOR;
       break;
-    case eColorID_activeborder:
-      aResult = NS_RGB(0x00,0x00,0x00);
-      break;
-     case eColorID_appworkspace:
-      aResult = NS_RGB(0xFF,0xFF,0xFF);
+    case eColorID_appworkspace:
+      // MDI background color
+      aColor = BG_NORMAL_COLOR;
       break;
     case eColorID_background:
-      aResult = NS_RGB(0x63,0x63,0xCE);
+      // desktop background
+      aColor = BG_NORMAL_COLOR;
       break;
-    case eColorID_buttonface:
-    case eColorID__moz_buttonhoverface:
-      aResult = NS_RGB(0xF0,0xF0,0xF0);
-      break;
-    case eColorID_buttonhighlight:
-      aResult = NS_RGB(0xFF,0xFF,0xFF);
-      break;
-    case eColorID_buttonshadow:
-      aResult = NS_RGB(0xDC,0xDC,0xDC);
+    case eColorID_captiontext:
+      // text in active window caption, size box, and scrollbar arrow box (!)
+      aColor = FG_NORMAL_COLOR;
       break;
     case eColorID_graytext:
-      aResult = NS_RGB(0x44,0x44,0x44);
+      // disabled text in windows, menus, etc.
+      aColor = FG_INSENSITIVE_COLOR;
+      break;
+    case eColorID_highlight:
+      // background of selected item
+      aColor = BASE_SELECTED_COLOR;
+      break;
+    case eColorID_highlighttext:
+      // text of selected item
+      aColor = TEXT_SELECTED_COLOR;
       break;
     case eColorID_inactiveborder:
-      aResult = NS_RGB(0xff,0xff,0xff);
+      // inactive window border
+      aColor = BG_NORMAL_COLOR;
       break;
     case eColorID_inactivecaption:
-      aResult = NS_RGB(0xaa,0xaa,0xaa);
+      // inactive window caption
+      aColor = BG_INSENSITIVE_COLOR;
       break;
     case eColorID_inactivecaptiontext:
-      aResult = NS_RGB(0x45,0x45,0x45);
-      break;
-    case eColorID_scrollbar:
-      aResult = NS_RGB(0,0,0); //XXX
-      break;
-    case eColorID_threeddarkshadow:
-      aResult = NS_RGB(0xDC,0xDC,0xDC);
-      break;
-    case eColorID_threedshadow:
-      aResult = NS_RGB(0xE0,0xE0,0xE0);
-      break;
-    case eColorID_threedface:
-      aResult = NS_RGB(0xF0,0xF0,0xF0);
-      break;
-    case eColorID_threedhighlight:
-      aResult = NS_RGB(0xff,0xff,0xff);
-      break;
-    case eColorID_threedlightshadow:
-      aResult = NS_RGB(0xDA,0xDA,0xDA);
-      break;
-    case eColorID_menu:
-      aResult = NS_RGB(0xff,0xff,0xff);
+      // text in inactive window caption
+      aColor = FG_INSENSITIVE_COLOR;
       break;
     case eColorID_infobackground:
-      aResult = NS_RGB(0xFF,0xFF,0xC7);
+      // tooltip background color
+      aColor = TOOLTIP_COLOR;
       break;
-    case eColorID_windowframe:
-      aResult = NS_RGB(0xaa,0xaa,0xaa);
+    case eColorID_infotext:
+      // tooltip text color
+      aColor = TEXT_NORMAL_COLOR;
       break;
+    case eColorID_menu:
+      // menu background
+      aColor = BG_NORMAL_COLOR;
+      break;
+    case eColorID_menutext:
+      // menu text
+      aColor = TEXT_NORMAL_COLOR;
+      break;
+    case eColorID_scrollbar:
+      // scrollbar gray area
+      aColor = BASE_ACTIVE_COLOR;
+      break;
+
+    case eColorID_threedface:
+    case eColorID_buttonface:
+      // 3-D face color
+      aColor = BG_NORMAL_COLOR;
+      break;
+
+    case eColorID_buttontext:
+      // text on push buttons
+      aColor = TEXT_NORMAL_COLOR;
+      break;
+
+    case eColorID_buttonhighlight:
+      // 3-D highlighted edge color
+    case eColorID_threedhighlight:
+      // 3-D highlighted outer edge color
+      aColor = LIGHT_NORMAL_COLOR;
+      break;
+
+    case eColorID_threedlightshadow:
+      // 3-D highlighted inner edge color
+      aColor = BG_NORMAL_COLOR;
+      break;
+
+    case eColorID_buttonshadow:
+      // 3-D shadow edge color
+    case eColorID_threedshadow:
+      // 3-D shadow inner edge color
+      aColor = DARK_NORMAL_COLOR;
+      break;
+
+    case eColorID_threeddarkshadow:
+      // 3-D shadow outer edge color
+      aColor = BLACK_COLOR;
+      break;
+
     case eColorID_window:
+    case eColorID_windowframe:
+      aColor = BG_NORMAL_COLOR;
+      break;
+
+    case eColorID_windowtext:
+      aColor = FG_NORMAL_COLOR;
+      break;
+
+    case eColorID__moz_eventreerow:
     case eColorID__moz_field:
-    case eColorID__moz_combobox:
-      aResult = NS_RGB(0xff,0xff,0xff);
+      aColor = BASE_NORMAL_COLOR;
       break;
     case eColorID__moz_fieldtext:
-    case eColorID__moz_comboboxtext:
-      aResult = 0;
+      aColor = TEXT_NORMAL_COLOR;
       break;
     case eColorID__moz_dialog:
-      aResult = NS_RGB(0xaa,0xaa,0xaa);
+      aColor = BG_NORMAL_COLOR;
       break;
     case eColorID__moz_dialogtext:
-    case eColorID__moz_cellhighlighttext:
-    case eColorID__moz_html_cellhighlighttext:
-      aResult = 0;
+      aColor = FG_NORMAL_COLOR;
       break;
     case eColorID__moz_dragtargetzone:
-    case eColorID__moz_mac_chrome_active:
-    case eColorID__moz_mac_chrome_inactive:
-      aResult = NS_RGB(0xaa,0xaa,0xaa);
-      break;
-    case eColorID__moz_mac_focusring:
-      aResult = NS_RGB(0x3F,0x98,0xDD);
-      break;
-    case eColorID__moz_mac_menushadow:
-      aResult = NS_RGB(0xA3,0xA3,0xA3);
-      break;
-    case eColorID__moz_mac_menutextdisable:
-      aResult = NS_RGB(0x88,0x88,0x88);
-      break;
-    case eColorID__moz_mac_menutextselect:
-      aResult = NS_RGB(0xaa,0xaa,0xaa);
-      break;
-    case eColorID__moz_mac_disabledtoolbartext:
-      aResult = NS_RGB(0x3F,0x3F,0x3F);
-      break;
-    case eColorID__moz_mac_menuselect:
-      aResult = NS_RGB(0xaa,0xaa,0xaa);
+      aColor = BG_SELECTED_COLOR;
       break;
     case eColorID__moz_buttondefault:
-      aResult = NS_RGB(0xDC,0xDC,0xDC);
+      // default button border color
+      aColor = BLACK_COLOR;
+      break;
+    case eColorID__moz_buttonhoverface:
+      aColor = BG_PRELIGHT_COLOR;
+      break;
+    case eColorID__moz_buttonhovertext:
+      aColor = FG_PRELIGHT_COLOR;
       break;
     case eColorID__moz_cellhighlight:
     case eColorID__moz_html_cellhighlight:
-    case eColorID__moz_mac_secondaryhighlight:
-      // For inactive list selection
-      aResult = NS_RGB(0xaa,0xaa,0xaa);
+      aColor = BASE_ACTIVE_COLOR;
       break;
-    case eColorID__moz_eventreerow:
-      // Background color of even list rows.
-      aResult = NS_RGB(0xff,0xff,0xff);
+    case eColorID__moz_cellhighlighttext:
+    case eColorID__moz_html_cellhighlighttext:
+      aColor = TEXT_ACTIVE_COLOR;
+      break;
+    case eColorID__moz_menuhover:
+      aColor = BG_SELECTED_COLOR;
+      break;
+    case eColorID__moz_menuhovertext:
+      aColor = FG_SELECTED_COLOR;
       break;
     case eColorID__moz_oddtreerow:
-      // Background color of odd list rows.
-      aResult = NS_TRANSPARENT;
+      aColor = BASE_ACTIVE_COLOR;
       break;
     case eColorID__moz_nativehyperlinktext:
-      // There appears to be no available system defined color. HARDCODING to the appropriate color.
-      aResult = NS_RGB(0x14,0x4F,0xAE);
+      aColor = BLUE_COLOR;
       break;
-    default:
-      NS_WARNING("Someone asked nsILookAndFeel for a color I don't know about");
-      aResult = NS_RGB(0xff,0xff,0xff);
-      res = NS_ERROR_FAILURE;
+    case eColorID__moz_comboboxtext:
+      aColor = TEXT_NORMAL_COLOR;
       break;
-    }
+    case eColorID__moz_combobox:
+      aColor = BG_NORMAL_COLOR;
+      break;
+    case eColorID__moz_menubartext:
+      aColor = TEXT_NORMAL_COLOR;
+      break;
+    case eColorID__moz_menubarhovertext:
+      aColor = FG_NORMAL_COLOR;
+      break;
+    default: {
+      /* default color is BLACK */
+      aColor = NS_RGB(0, 0, 0);
+      nsCString msg = nsPrintfCString("Someone asked nsILookAndFeel for a color I don't know about: %d", aID);
+      NS_WARNING(msg.get());
+      rv = NS_ERROR_FAILURE;
+    } break;
+  }
 
-  return res;
+  return rv;
 }
 
 NS_IMETHODIMP
-nsLookAndFeel::GetIntImpl(IntID aID, int32_t &aResult)
-{
-  nsresult res = nsXPLookAndFeel::GetIntImpl(aID, aResult);
-  if (NS_SUCCEEDED(res))
-    return res;
-  res = NS_OK;
+nsLookAndFeel::GetIntImpl(IntID aID, int32_t &aResult) {
+  nsresult rv = nsXPLookAndFeel::GetIntImpl(aID, aResult);
+  if (NS_SUCCEEDED(rv)) {
+    return rv;
+  }
+
+  rv = NS_OK;
 
   switch (aID) {
     case eIntID_CaretBlinkTime:
-      aResult = 567;
+      aResult = 500;
       break;
+
     case eIntID_CaretWidth:
       aResult = 1;
       break;
+
     case eIntID_ShowCaretDuringSelection:
       aResult = 0;
       break;
+
     case eIntID_SelectTextfieldsOnKeyFocus:
       // Select textfield content when focused by kbd
-      // used by nsEventStateManager::sTextfieldSelectModel
+      // used by EventStateManager::sTextfieldSelectModel
       aResult = 1;
       break;
+
     case eIntID_SubmenuDelay:
       aResult = 200;
       break;
-    case eIntID_MenusCanOverlapOSBar:
-      // xul popups are not allowed to overlap the menubar.
-      aResult = 0;
+
+    case eIntID_TooltipDelay:
+      aResult = 500;
       break;
-    case eIntID_SkipNavigatingDisabledMenuItem:
+
+    case eIntID_MenusCanOverlapOSBar:
+      // we want XUL popups to be able to overlap the task bar.
       aResult = 1;
       break;
-    case eIntID_DragThresholdX:
-    case eIntID_DragThresholdY:
-      aResult = 4;
+    case eIntID_SwipeAnimationEnabled:
+      aResult = 0;
       break;
+    case eIntID_UseOverlayScrollbars:
+      aResult = 0;
+      break;
+    case eIntID_AllowOverlayScrollbarsOverlap:
+      aResult = 0;
+      break;
+    case eIntID_ScrollbarDisplayOnMouseMove:
+      aResult = 1;
+      break;
+
     case eIntID_ScrollArrowStyle:
-      aResult = eScrollArrow_None;
+      aResult = eScrollArrowStyle_Single;
       break;
+
     case eIntID_ScrollSliderStyle:
       aResult = eScrollThumbStyle_Proportional;
       break;
-    case eIntID_TreeOpenDelay:
-      aResult = 1000;
-      break;
-    case eIntID_TreeCloseDelay:
-      aResult = 1000;
-      break;
-    case eIntID_TreeLazyScrollDelay:
-      aResult = 150;
-      break;
-    case eIntID_TreeScrollDelay:
-      aResult = 100;
-      break;
-    case eIntID_TreeScrollLinesMax:
-      aResult = 3;
-      break;
-    case eIntID_DWMCompositor:
-    case eIntID_WindowsClassic:
-    case eIntID_WindowsDefaultTheme:
+
     case eIntID_TouchEnabled:
       aResult = 0;
-      res = NS_ERROR_NOT_IMPLEMENTED;
       break;
-    case eIntID_MacGraphiteTheme:
+
+    case eIntID_ColorPickerAvailable:
       aResult = 0;
       break;
-    case eIntID_TabFocusModel:
-      aResult = 1;    // default to just textboxes
-      break;
-    case eIntID_ScrollToClick:
+
+    case eIntID_WindowsDefaultTheme:
+    case eIntID_WindowsThemeIdentifier:
+    case eIntID_OperatingSystemVersionIdentifier:
       aResult = 0;
+      rv = NS_ERROR_NOT_IMPLEMENTED;
       break;
-    case eIntID_ChosenMenuItemsShouldBlink:
+    case eIntID_WindowsClassic:
+      // we do not have any visual styles
       aResult = 1;
       break;
-    case eIntID_IMERawInputUnderlineStyle:
-    case eIntID_IMEConvertedTextUnderlineStyle:
-    case eIntID_IMESelectedRawTextUnderlineStyle:
-    case eIntID_IMESelectedConvertedTextUnderline:
-      aResult = NS_STYLE_TEXT_DECORATION_STYLE_SOLID;
-      break;
     case eIntID_SpellCheckerUnderlineStyle:
-      aResult = NS_STYLE_TEXT_DECORATION_STYLE_DOTTED;
+      aResult = NS_STYLE_TEXT_DECORATION_STYLE_WAVY;
       break;
+
+    case eIntID_ScrollbarButtonAutoRepeatBehavior:
+      aResult = 0;
+      break;
+
     case eIntID_ContextMenuOffsetVertical:
     case eIntID_ContextMenuOffsetHorizontal:
       aResult = 2;
       break;
+
     default:
       aResult = 0;
-      res = NS_ERROR_FAILURE;
+      rv = NS_ERROR_FAILURE;
   }
-  return res;
+
+  return rv;
 }
 
 NS_IMETHODIMP
-nsLookAndFeel::GetFloatImpl(FloatID aID, float &aResult)
-{
+nsLookAndFeel::GetFloatImpl(FloatID aID, float &aResult) {
   nsresult res = nsXPLookAndFeel::GetFloatImpl(aID, aResult);
-  if (NS_SUCCEEDED(res))
+  if (NS_SUCCEEDED(res)) {
     return res;
+  }
   res = NS_OK;
 
   switch (aID) {
     case eFloatID_IMEUnderlineRelativeSize:
-      aResult = 2.0f;
+      aResult = 1.0f;
       break;
     case eFloatID_SpellCheckerUnderlineRelativeSize:
-      aResult = 2.0f;
+      aResult = 1.0f;
       break;
     default:
       aResult = -1.0;
@@ -358,23 +411,16 @@ nsLookAndFeel::GetFloatImpl(FloatID aID, float &aResult)
   return res;
 }
 
-bool
-nsLookAndFeel::GetFontImpl(FontID aID, nsString &aFontName,
+bool nsLookAndFeel::GetFontImpl(FontID aID, nsString &aFontName,
                            gfxFontStyle &aFontStyle,
-                           float aDevPixPerCSSPixel)
-{
-    // hack for now
-    if (aID == eFont_Window || aID == eFont_Document) {
-        aFontStyle.style      = NS_FONT_STYLE_NORMAL;
-        aFontStyle.weight     = NS_FONT_WEIGHT_NORMAL;
-        aFontStyle.stretch    = NS_FONT_STRETCH_NORMAL;
-        aFontStyle.size       = 14 * aDevPixPerCSSPixel;
-        aFontStyle.systemFont = true;
+                           float aDevPixPerCSSPixel) {
+  // prepare some font name
+  aFontStyle.style = NS_FONT_STYLE_NORMAL;
+  aFontStyle.weight = NS_FONT_WEIGHT_NORMAL;
+  aFontStyle.stretch = NS_FONT_STRETCH_NORMAL;
+  aFontStyle.size = 11 * aDevPixPerCSSPixel;
+  aFontStyle.systemFont = true;
 
-        aFontName.AssignLiteral("sans-serif");
-        return true;
-    }
-
-    //TODO: implement more here?
-    return false;
+  aFontName.AssignLiteral("liberation sans");
+  return true;
 }
