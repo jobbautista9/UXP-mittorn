@@ -2694,6 +2694,9 @@ pref("layout.testing.overlay-scrollbars.always-visible", false);
 // are pending.
 pref("layout.interruptible-reflow.enabled", true);
 
+// draw popups inside layout instead of creating separate widgets
+pref("layout.fake-popups.enabled", false);
+
 // pref to control browser frame rate, in Hz. A value <= 0 means choose
 // automatically based on knowledge of the platform (or 60Hz if no platform-
 // specific information is available).

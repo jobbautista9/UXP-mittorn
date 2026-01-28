@@ -317,6 +317,10 @@ nsComboboxControlFrame::ShowPopup(bool aShowPopup)
     viewManager->ResizeView(view, emptyRect);
   }
 
+  if (nsLayoutUtils::FakePopupsEnabled()) {
+    InvalidateFrame();
+  }
+
   // fire a popup dom event if it is safe to do so
   nsCOMPtr<nsIPresShell> shell = PresContext()->GetPresShell();
   if (shell && nsContentUtils::IsSafeToRunScript()) {
@@ -339,16 +343,16 @@ nsComboboxControlFrame::ShowList(bool aShowList)
     // Create the widget for the drop-down list
     view->GetViewManager()->SetViewFloating(view, true);
 
-    nsWidgetInitData widgetData;
-    widgetData.mWindowType  = eWindowType_popup;
-    widgetData.mBorderStyle = eBorderStyle_default;
-    view->CreateWidgetForPopup(&widgetData);
+    if (!nsLayoutUtils::FakePopupsEnabled()) {
+      nsWidgetInitData widgetData;
+      widgetData.mWindowType  = eWindowType_popup;
+      widgetData.mBorderStyle = eBorderStyle_default;
+      view->CreateWidgetForPopup(&widgetData);
+    }
   } else {
     nsIWidget* widget = view->GetWidget();
-    if (widget) {
-      // We must do this before ShowPopup in case it destroys us (bug 813442).
-      widget->CaptureRollupEvents(this, false);
-    }
+     // We must do this before ShowPopup in case it destroys us (bug 813442).
+    nsLayoutUtils::CaptureRollupEvents(widget, this, false);
   }
 
   nsWeakFrame weakFrame(this);
@@ -364,13 +368,13 @@ nsComboboxControlFrame::ShowList(bool aShowList)
     // ListWasSelected which will stop the capture.
     mListControlFrame->AboutToDropDown();
     mListControlFrame->CaptureMouseEvents(true);
-    if (widget) {
-      widget->CaptureRollupEvents(this, true);
-    }
+    nsLayoutUtils::CaptureRollupEvents(widget, this, true);
+    nsLayoutUtils::SetComboboxFocus(mDropdownFrame);
   } else {
     if (widget) {
       view->DestroyWidget();
     }
+    nsLayoutUtils::ClearComboboxFocus(mDropdownFrame);
   }
 
   return weakFrame.IsAlive();
@@ -1403,9 +1407,7 @@ nsComboboxControlFrame::DestroyFrom(nsIFrame* aDestructRoot)
     nsView* view = mDropdownFrame->GetView();
     MOZ_ASSERT(view);
     nsIWidget* widget = view->GetWidget();
-    if (widget) {
-      widget->CaptureRollupEvents(this, false);
-    }
+    nsLayoutUtils::CaptureRollupEvents(widget, this, false);
   }
 
   // Cleanup frames in popup child list

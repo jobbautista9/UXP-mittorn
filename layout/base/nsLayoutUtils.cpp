@@ -175,8 +175,13 @@ typedef nsStyleTransformMatrix::TransformReferenceBox TransformReferenceBox;
 /* static */ bool nsLayoutUtils::sInterruptibleReflowEnabled;
 /* static */ bool nsLayoutUtils::sSVGTransformBoxEnabled;
 /* static */ bool nsLayoutUtils::sTextCombineUprightDigitsEnabled;
+/* static */ bool nsLayoutUtils::sFakePopupsEnabled;
 /* static */ uint32_t nsLayoutUtils::sIdlePeriodDeadlineLimit;
 /* static */ uint32_t nsLayoutUtils::sQuiescentFramesBeforeIdlePeriod;
+
+/* static */ bool nsLayoutUtils::sFakePopupsVisible;
+/* static */  nsWeakFrame  nsLayoutUtils::sComboboxFocus;
+/* static */ nsIRollupListener *nsLayoutUtils::sFakeRollupListener;
 
 static ViewID sScrollIdCounter = FrameMetrics::START_SCROLL_ID;
 
@@ -2220,6 +2225,49 @@ nsLayoutUtils::GetEventCoordinatesRelativeTo(nsIWidget* aWidget,
   return widgetToView - aFrame->GetOffsetToCrossDoc(rootFrame);
 }
 
+void nsLayoutUtils::SetComboboxFocus(nsIFrame *aFrame)
+{
+  if (!sFakePopupsEnabled) {
+    return;
+  }
+  sComboboxFocus = aFrame;
+  sFakePopupsVisible = true;
+}
+
+void nsLayoutUtils::ClearComboboxFocus(nsIFrame *aFrame)
+{
+  if (!sFakePopupsEnabled) {
+    return;
+  }
+  if (aFrame && sComboboxFocus.IsAlive() && aFrame != sComboboxFocus) {
+    return;
+  }
+  sComboboxFocus = nullptr;
+}
+
+bool nsLayoutUtils::HandleRollupEvents(WidgetEvent *aEvent) {
+  nsIRollupListener *listener = sFakeRollupListener? sFakeRollupListener : (nsIRollupListener *)nsXULPopupManager::GetInstance();
+  bool consume = false;
+  bool rollUp = false;
+
+  if(!listener) {
+    return false;
+  }
+
+  if (aEvent->mMessage == eWheel) {
+    rollUp = listener->ShouldRollupOnMouseWheelEvent();
+    consume = listener->ShouldConsumeOnMouseWheelEvent();
+  } else if (aEvent->mMessage == eMouseDown) {
+    rollUp = true;
+  }
+
+  if (rollUp) {
+    consume |= listener->Rollup(0, false, nullptr, nullptr);
+  }
+
+  return consume;
+}
+
 nsIFrame*
 nsLayoutUtils::GetPopupFrameForEventCoordinates(nsPresContext* aPresContext,
                                                 const WidgetEvent* aEvent)
@@ -2230,6 +2278,13 @@ nsLayoutUtils::GetPopupFrameForEventCoordinates(nsPresContext* aPresContext,
   }
   nsTArray<nsIFrame*> popups;
   pm->GetVisiblePopups(popups);
+
+  if(sFakePopupsEnabled) {
+    if(sComboboxFocus.IsAlive())
+      popups.AppendElement(sComboboxFocus);
+    sFakePopupsVisible = popups.Length() > 0;
+  }
+
   uint32_t i;
   // Search from top to bottom
   for (i = 0; i < popups.Length(); i++) {
@@ -3336,6 +3391,19 @@ nsLayoutUtils::ExpireDisplayPortOnAsyncScrollableAncestor(nsIFrame* aFrame)
   }
 }
 
+static void BuildPopupDisplayList(nsView *view, nsDisplayListBuilder* aBuilder, nsDisplayList* aList)
+{
+  for (nsView* v = view->GetFirstChild(); v; v = v->GetNextSibling()) {
+    if (!v->HasWidget() && v->GetVisibility() == nsViewVisibility_kShow) {
+      BuildPopupDisplayList(v, aBuilder, aList);
+      nsIFrame *frame = v->GetFrame();
+      if (frame && nsLayoutUtils::IsPopup(frame)) {
+        frame->BuildDisplayListForStackingContext(aBuilder, aList);
+      }
+    }
+  }
+}
+
 nsresult
 nsLayoutUtils::PaintFrame(nsRenderingContext* aRenderingContext, nsIFrame* aFrame,
                           const nsRegion& aDirtyRegion, nscolor aBackstop,
@@ -3514,6 +3582,13 @@ nsLayoutUtils::PaintFrame(nsRenderingContext* aRenderingContext, nsIFrame* aFram
       buildingDisplayList(&builder, aFrame, canvasArea, false);
     presShell->AddCanvasBackgroundColorItem(
            builder, list, aFrame, canvasArea, aBackstop);
+  }
+
+  if (sFakePopupsVisible) {
+    nsView *view = aFrame->GetView();
+    if (view && view->HasWidget()) {
+      BuildPopupDisplayList(view, &builder, &list);
+    }
   }
 
   builder.LeavePresShell(aFrame, &list);
@@ -6890,10 +6965,12 @@ nsLayoutUtils::GetDisplayRootFrame(nsIFrame* aFrame)
   // NS_FRAME_IN_POPUP frame bit is set.
   nsIFrame* f = aFrame;
   for (;;) {
-    if (!f->HasAnyStateBits(NS_FRAME_IN_POPUP)) {
-      f = f->PresContext()->FrameManager()->GetRootFrame();
-    } else if (IsPopup(f)) {
-      return f;
+    if (!sFakePopupsEnabled) {
+      if (!f->HasAnyStateBits(NS_FRAME_IN_POPUP)) {
+        f = f->PresContext()->FrameManager()->GetRootFrame();
+      } else if (IsPopup(f)) {
+        return f;
+      }
     }
     nsIFrame* parent = GetCrossDocParentFrame(f);
     if (!parent)
@@ -7621,6 +7698,8 @@ nsLayoutUtils::Initialize()
   Preferences::AddUintVarCache(&sQuiescentFramesBeforeIdlePeriod,
                                "layout.idle_period.required_quiescent_frames",
                                DEFAULT_QUIESCENT_FRAMES);
+  Preferences::AddBoolVarCache(&sFakePopupsEnabled,
+                               "layout.fake-popups.enabled");
 
   for (auto& callback : kPrefCallbacks) {
     Preferences::RegisterCallbackAndCall(callback.func, callback.name);

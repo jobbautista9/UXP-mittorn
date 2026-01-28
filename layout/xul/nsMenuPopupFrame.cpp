@@ -168,7 +168,7 @@ nsMenuPopupFrame::Init(nsIContent*       aContent,
   // To improve performance, create the widget for the popup only if it is not
   // a leaf. Leaf popups such as menus will create their widgets later when
   // the popup opens.
-  if (!IsLeaf() && !ourView->HasWidget()) {
+  if (!IsLeaf() && !ourView->HasWidget() && !nsLayoutUtils::FakePopupsEnabled()) {
     CreateWidgetForView(ourView);
   }
 
@@ -239,6 +239,14 @@ void
 nsMenuPopupFrame::EnsureWidget()
 {
   nsView* ourView = GetView();
+
+  if (nsLayoutUtils::FakePopupsEnabled()) {
+    if (MOZ_UNLIKELY(ourView->HasWidget())) {
+      ourView->DestroyWidget();
+    }
+    return;
+  }
+
   if (!ourView->HasWidget()) {
     NS_ASSERTION(!mGeneratedChildren && !PrincipalChildList().FirstChild(),
                  "Creating widget for MenuPopupFrame with children");
@@ -991,6 +999,9 @@ nsMenuPopupFrame::HidePopup(bool aDeselectMenu, nsPopupState aNewState)
   if (menuFrame) {
     menuFrame->PopupClosed(aDeselectMenu);
   }
+  if (nsLayoutUtils::FakePopupsEnabled()) {
+    InvalidateFrame();
+  }
 }
 
 nsIFrame::ReflowChildFlags nsMenuPopupFrame::GetXULLayoutFlags() {
@@ -1679,7 +1690,7 @@ nsMenuPopupFrame::GetConstraintRect(const LayoutDeviceIntRect& aAnchorRect,
     }
   }
 
-  if (mInContentShell) {
+  if (mInContentShell || nsLayoutUtils::FakePopupsEnabled()) {
     // for content shells, clip to the client area rather than the screen area
     screenRectPixels.IntersectRect(screenRectPixels, aRootScreenRect);
   }
@@ -2287,7 +2298,7 @@ nsMenuPopupFrame::MoveTo(const CSSIntPoint& aPos, bool aUpdateAttrs)
 {
   nsIWidget* widget = GetWidget();
   if ((mScreenRect.x == aPos.x && mScreenRect.y == aPos.y) &&
-      (!widget || widget->GetClientOffset() == mLastClientOffset)) {
+      (widget && widget->GetClientOffset() == mLastClientOffset)) {
     return;
   }
 

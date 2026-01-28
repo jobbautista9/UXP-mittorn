@@ -521,6 +521,14 @@ public:
         frame = mPresShell->GetRootFrame();
       }
       if (frame) {
+        if (nsLayoutUtils::FakePopupsVisible() &&
+            !nsLayoutUtils::IsPopup(frame) &&
+            !frame->HasAnyStateBits(NS_FRAME_IN_POPUP) &&
+            (aVisitor.mEvent->mMessage == eMouseDown ||
+             aVisitor.mEvent->mMessage == eWheel ) &&
+            nsLayoutUtils::HandleRollupEvents(aVisitor.mEvent)) {
+          return;
+        }
         frame->HandleEvent(aVisitor.mPresContext,
                            aVisitor.mEvent->AsGUIEvent(),
                            &aVisitor.mEventStatus);

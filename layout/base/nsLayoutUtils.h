@@ -1,4 +1,4 @@
-/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+  /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -2404,6 +2404,25 @@ public:
     return sInvalidationDebuggingIsEnabled || getenv("MOZ_DUMP_INVALIDATION") != 0;
   }
 
+  static bool FakePopupsEnabled() {
+    return sFakePopupsEnabled;
+  }
+
+  static bool FakePopupsVisible() {
+    return sFakePopupsVisible;
+  }
+  static void SetComboboxFocus(nsIFrame *aFrame);
+  static void ClearComboboxFocus(nsIFrame *aFrame);
+  static bool HandleRollupEvents(mozilla::WidgetEvent *aEvent);
+  static void CaptureRollupEvents(nsIWidget *aWidget, nsIRollupListener *aListener, bool aDoCapture) {
+    if (sFakePopupsEnabled) {
+      sFakeRollupListener = aDoCapture? aListener: nullptr;
+    } else if (aWidget) {
+      aWidget->CaptureRollupEvents(aListener, aDoCapture);
+    }
+  }
+
+
   static void Initialize();
   static void Shutdown();
 
@@ -2900,8 +2919,13 @@ private:
   static bool sInterruptibleReflowEnabled;
   static bool sSVGTransformBoxEnabled;
   static bool sTextCombineUprightDigitsEnabled;
+  static bool sFakePopupsEnabled;
   static uint32_t sIdlePeriodDeadlineLimit;
   static uint32_t sQuiescentFramesBeforeIdlePeriod;
+
+  static nsWeakFrame sComboboxFocus;
+  static nsIRollupListener *sFakeRollupListener;
+  static bool sFakePopupsVisible;
 
   /**
    * Helper function for LogTestDataForPaint().

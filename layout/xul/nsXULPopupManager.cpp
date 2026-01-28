@@ -194,9 +194,7 @@ nsXULPopupManager::Rollup(uint32_t aCount, bool aFlush,
   // We can disable the autohide behavior via a pref to ease debugging.
   if (nsXULPopupManager::sDevtoolsDisableAutoHide) {
     // Required on linux to allow events to work on other targets.
-    if (mWidget) {
-      mWidget->CaptureRollupEvents(nullptr, false);
-    }
+    nsLayoutUtils::CaptureRollupEvents(mWidget, nullptr, false);
     return false;
   }
 
@@ -1920,16 +1918,15 @@ nsXULPopupManager::SetCaptureState(nsIContent* aOldPopup)
   if (item && aOldPopup == item->Content())
     return;
 
-  if (mWidget) {
-    mWidget->CaptureRollupEvents(nullptr, false);
-    mWidget = nullptr;
-  }
+  nsLayoutUtils::CaptureRollupEvents(mWidget, nullptr, false);
+  mWidget = nullptr;
 
   if (item) {
     nsMenuPopupFrame* popup = item->Frame();
     mWidget = popup->GetWidget();
+
+    nsLayoutUtils::CaptureRollupEvents(mWidget, nullptr, true);
     if (mWidget) {
-      mWidget->CaptureRollupEvents(nullptr, true);
       popup->AttachedDismissalListener();
     }
   }
