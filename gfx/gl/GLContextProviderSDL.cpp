@@ -1,0 +1,240 @@
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
+#include "GLContext.h"
+#include "GLContextProvider.h"
+#include "GLLibraryLoader.h"
+#include "mozilla/widget/CompositorWidget.h"
+#include "nsDebug.h"
+#include "nsIWidget.h"
+#include <SDL.h>
+
+namespace mozilla {
+namespace gl {
+
+using namespace mozilla::gfx;
+using namespace mozilla::widget;
+
+class GLContextSDL : public GLContext {
+public:
+  MOZ_DECLARE_REFCOUNTED_VIRTUAL_TYPENAME(GLContextSDL, override)
+  // From Window: (possibly for offscreen!)
+  GLContextSDL(CreateContextFlags flags, const SurfaceCaps &caps,
+               bool robustness, bool isOffscreen, SDL_GLContext aContext,
+               SDL_Window *aWindow)
+      : GLContext(flags, caps, nullptr, isOffscreen)
+    , mContext(aContext)
+    , mWnd(aWindow)
+    , mIsDoubleBuffered(false)
+    , mHasRobustness(robustness)
+    , mOffscreen(isOffscreen) {
+    // initialize compatibility profile for now
+    SetProfileVersion(ContextProfile::OpenGLCompatibility, 200);
+  }
+
+  ~GLContextSDL() {
+    MarkDestroyed();
+    if (mOffscreen && mWnd) {
+      SDL_DestroyWindow(mWnd);
+    }
+  }
+
+  virtual GLContextType GetContextType() const override {
+    return GLContextType::SDL;
+  }
+
+  static GLContextSDL *Cast(GLContext *gl) {
+    MOZ_ASSERT(gl->GetContextType() == GLContextType::SDL);
+    return static_cast<GLContextSDL *>(gl);
+  }
+
+  bool Init() override {
+    if (!mWnd || !mContext) {
+      return false;
+    }
+
+    SetupLookupFunction();
+    return InitWithPrefix("gl", false);
+  }
+
+  virtual bool MakeCurrentImpl(bool aForce) override {
+    if (IsDestroyed()) {
+      return true;
+    }
+
+    bool succeeded = true;
+    if (aForce || SDL_GL_GetCurrentContext() != mContext) {
+
+      // sdl have no way to detach context
+      if (!mWnd) {
+        return true;
+      }
+      succeeded = SDL_GL_MakeCurrent(mWnd, mContext) == 0;
+      NS_ASSERTION(succeeded, SDL_GetError());
+    }
+
+    return succeeded;
+  }
+
+  virtual bool IsCurrent() override {
+    return SDL_GL_GetCurrentContext() == mContext;
+  }
+
+  void SetIsDoubleBuffered(bool aIsDB) {
+    mIsDoubleBuffered = aIsDB;
+  }
+
+  virtual bool IsDoubleBuffered() const override {
+    return mIsDoubleBuffered;
+  }
+
+  virtual bool SupportsRobustness() const override {
+    return mHasRobustness;
+  }
+
+  virtual bool SwapBuffers() override {
+    SDL_GL_SwapWindow(mWnd);
+    return true;
+  }
+
+  virtual void GetWSIInfo(nsCString *const out) const override {
+    out->AppendLiteral("SDL GL Context");
+  }
+
+  virtual bool SetupLookupFunction() override {
+    mLookupFunc = (PlatformLookupFunction)SDL_GL_GetProcAddress;
+    return true;
+  }
+
+  SDL_GLContext Context() {
+    return mContext;
+  }
+
+protected:
+  friend class GLContextProviderSDL;
+
+  SDL_GLContext mContext;
+  SDL_Window *mWnd;
+  bool mIsDoubleBuffered, mHasRobustness, mOffscreen;
+};
+
+static GLContextSDL *GetGlobalContextSDL() {
+  return static_cast<GLContextSDL *>(GLContextProviderSDL::GetGlobalContext());
+}
+
+already_AddRefed<GLContext>
+GLContextProviderSDL::CreateWrappingExisting(void *, void *) {
+  return nullptr;
+}
+
+already_AddRefed<GLContext> GLContextProviderSDL::CreateForCompositorWidget(
+    CompositorWidget *aCompositorWidget, bool aForceAccelerated) {
+
+  return CreateForWindow(aCompositorWidget->RealWidget(), aForceAccelerated);
+}
+
+already_AddRefed<GLContext>
+GLContextProviderSDL::CreateForWindow(nsIWidget *aWidget, bool aForceAccelerated) {
+  SDL_GL_ResetAttributes();
+
+  if (aForceAccelerated) {
+    SDL_GL_SetAttribute(SDL_GL_ACCELERATED_VISUAL, SDL_TRUE);
+  }
+
+  SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, SDL_TRUE);
+  bool hasRobustness = true;
+  SDL_GL_SetAttribute(SDL_GL_CONTEXT_RESET_NOTIFICATION, SDL_TRUE);
+  SDL_GL_SetAttribute(SDL_GL_CONTEXT_FLAGS, SDL_GL_CONTEXT_ROBUST_ACCESS_FLAG);
+
+  SDL_Window *win = (SDL_Window *)aWidget->GetNativeData(NS_NATIVE_WIDGET);
+  SDL_GLContext context = SDL_GL_CreateContext(win);
+
+  NS_ASSERTION(context, SDL_GetError());
+
+  if (!context) {
+    return nullptr;
+  }
+  SDL_GLcontextFlag flags;
+  SDL_GL_GetAttribute(SDL_GL_CONTEXT_FLAGS, (int *)&flags);
+  hasRobustness = !!(flags & SDL_GL_CONTEXT_ROBUST_ACCESS_FLAG);
+
+  SurfaceCaps caps = SurfaceCaps::ForRGBA();
+  RefPtr<GLContextSDL> glContext = new GLContextSDL(
+      CreateContextFlags::NONE, caps, hasRobustness, false, context, win);
+  if (!glContext->Init()) {
+    return nullptr;
+  }
+
+  glContext->SetIsDoubleBuffered(true);
+  SDL_GL_SetSwapInterval(0);
+
+  return glContext.forget();
+}
+
+static already_AddRefed<GLContextSDL> CreateWindowOffscreenContext() {
+  SDL_GL_ResetAttributes();
+  SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, SDL_FALSE);
+  bool hasRobustness = true;
+  SDL_GL_SetAttribute(SDL_GL_CONTEXT_RESET_NOTIFICATION, SDL_TRUE);
+  SDL_GL_SetAttribute(SDL_GL_CONTEXT_FLAGS, SDL_GL_CONTEXT_ROBUST_ACCESS_FLAG);
+  // this will break if sdl driver does not support hidden windows
+  SDL_Window *win = SDL_CreateWindow("GLContextSDL", 0, 0, 100, 100,
+                                     SDL_WINDOW_HIDDEN | SDL_WINDOW_OPENGL);
+  if (!win) {
+    return nullptr;
+  }
+
+  SDL_GLContext context = SDL_GL_CreateContext(win);
+  NS_ASSERTION(context, SDL_GetError());
+  if (!context) {
+    return nullptr;
+  }
+  SDL_GLcontextFlag flags;
+  SDL_GL_GetAttribute(SDL_GL_CONTEXT_FLAGS, (int *)&flags);
+  hasRobustness = !!(flags & SDL_GL_CONTEXT_ROBUST_ACCESS_FLAG);
+
+  SurfaceCaps caps = SurfaceCaps::ForRGBA();
+  RefPtr<GLContextSDL> glContext = new GLContextSDL(
+      CreateContextFlags::NONE, caps, hasRobustness, true, context, win);
+  return glContext.forget();
+}
+
+/*static*/ already_AddRefed<GLContext>
+GLContextProviderSDL::CreateHeadless(CreateContextFlags flags, nsACString *const out_failureId) {
+  // SDL2 does not support pbuffers/headless, create a window context and use a FBO.
+
+  RefPtr<GLContextSDL> glContext = CreateWindowOffscreenContext();
+
+  if (!glContext || !glContext->Init()) {
+    return nullptr;
+  }
+
+  RefPtr<GLContext> retGL = glContext.get();
+  return retGL.forget();
+}
+
+/*static*/ already_AddRefed<GLContext> GLContextProviderSDL::CreateOffscreen(
+    const IntSize &size, const SurfaceCaps &minCaps, CreateContextFlags flags,
+    nsACString *const out_failureId) {
+  RefPtr<GLContext> gl = CreateHeadless(flags, out_failureId);
+  if (!gl) {
+    return nullptr;
+  }
+
+  if (!gl->InitOffscreen(size, minCaps)) {
+    *out_failureId = NS_LITERAL_CSTRING("FEATURE_FAILURE_SDL_GL_INIT");
+    return nullptr;
+  }
+
+  return gl.forget();
+}
+
+/*static*/ GLContext *GLContextProviderSDL::GetGlobalContext() {
+  return nullptr;
+}
+
+/*static*/ void GLContextProviderSDL::Shutdown() {}
+
+} /* namespace gl */
+} /* namespace mozilla */

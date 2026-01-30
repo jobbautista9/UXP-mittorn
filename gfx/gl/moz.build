@@ -113,6 +113,12 @@ elif gl_provider == 'GLX':
     EXPORTS += [
         'SharedSurfaceGLX.h'
     ]
+elif gl_provider == 'SDL':
+    SOURCES += [
+        'GLContextProviderSDL.cpp',
+    ]
+    EXPORTS += [
+    ]
 
 UNIFIED_SOURCES += [
     'DecomposeIntoNoRepeatTriangles.cpp',
