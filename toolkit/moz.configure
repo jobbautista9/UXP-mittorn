@@ -48,7 +48,7 @@ set_config('L10NBASEDIR', l10n_base)
 # reason.
 option('--enable-default-toolkit', nargs=1,
        choices=('cairo-windows', 'cairo-gtk2', 'cairo-gtk2-x11', 'cairo-gtk3',
-                'cairo-cocoa', 'cairo-uikit', 'none'),
+                'cairo-cocoa', 'cairo-uikit', 'none', 'sdl'),
        help='Select default toolkit')
 
 @depends('--enable-default-toolkit', target, '--help')
@@ -63,7 +63,7 @@ def toolkit(value, target, _):
     elif target.os == 'iOS':
         platform_choices = ('cairo-uikit',)
     else:
-        platform_choices = ('cairo-gtk3', 'cairo-gtk2', 'cairo-gtk2-x11', 'none')
+        platform_choices = ('cairo-gtk3', 'cairo-gtk2', 'cairo-gtk2-x11', 'none', 'sdl')
 
     if value:
         if value[0] not in platform_choices:
@@ -101,8 +101,9 @@ def toolkit_define(toolkit):
 set_define(toolkit_define, True)
 
 @depends(toolkit)
+
 def generic_toolkit_define(toolkit):
-    if toolkit in ('none',):
+    if toolkit in ('none','sdl'):
         return 'MOZ_TOOLKIT_GENERIC'
 
 set_define(generic_toolkit_define, True)

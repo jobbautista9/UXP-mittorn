@@ -2156,6 +2156,14 @@ none)
     USE_FREETYPE_FT2=1
     ;;
 
+sdl)
+    USE_FREETYPE_FT2=1
+    TK_LIBS="-lSDL2"
+    TK_CFLAGS="-I/usr/include/SDL2"
+    CFLAGS="$CFLAGS $TK_CFLAGS"
+    CXXFLAGS="$CXXFLAGS $TK_CFLAGS"
+    ;;
+
 gtk3)
     USE_FC_FREETYPE=1
     ;;

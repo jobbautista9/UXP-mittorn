@@ -5,7 +5,7 @@
 
 toolkit = CONFIG['MOZ_WIDGET_TOOLKIT']
 
-if toolkit in ('cocoa', 'uikit', 'none'):
+if toolkit in ('cocoa', 'uikit', 'none', 'sdl'):
     DIRS += [toolkit]
 
 if toolkit in ('gtk2', 'gtk3'):
@@ -228,7 +228,7 @@ if toolkit in ('cocoa', 'windows'):
         'nsBaseClipboard.cpp',
     ]
 
-if toolkit in {'gtk2', 'gtk3', 'cocoa', 'windows', 'uikit', 'none'}:
+if toolkit in {'gtk2', 'gtk3', 'cocoa', 'windows', 'uikit', 'none', 'sdl'}:
     UNIFIED_SOURCES += ['nsBaseFilePicker.cpp']
 
 if toolkit in ('gtk2', 'gtk3', 'windows', 'cocoa'):
@@ -277,6 +277,14 @@ LOCAL_INCLUDES += [
     '/widget/%s' % widget_dir,
 ]
 FINAL_LIBRARY = 'xul'
+
+# share generic widgets code
+if toolkit == 'sdl':
+    UNIFIED_SOURCES += [
+        'none/GfxInfo.cpp',
+        'none/nsLookAndFeel.cpp',
+    ]
+    LOCAL_INCLUDES += ['none']
 
 if CONFIG['MOZ_ENABLE_D3D10_LAYER']:
     DEFINES['MOZ_ENABLE_D3D10_LAYER'] = True
