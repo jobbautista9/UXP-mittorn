@@ -93,7 +93,6 @@ def toolkit_gtk(toolkit):
         return '3'
 
 set_define('MOZ_WIDGET_GTK', toolkit_gtk)
-
 @depends(toolkit)
 def toolkit_define(toolkit):
     if toolkit not in ('gtk2', 'gtk3', 'windows'):
@@ -101,6 +100,12 @@ def toolkit_define(toolkit):
 
 set_define(toolkit_define, True)
 
+@depends(toolkit)
+def generic_toolkit_define(toolkit):
+    if toolkit in ('none',):
+        return 'MOZ_TOOLKIT_GENERIC'
+
+set_define(generic_toolkit_define, True)
 
 option('--without-x', env='WITHOUT_X', help='Disable X11 support')
 
