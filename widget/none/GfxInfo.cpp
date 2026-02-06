@@ -4,7 +4,6 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "GfxInfo.h"
-#include "nsServiceManagerUtils.h"
 
 namespace mozilla {
 namespace widget {
@@ -85,7 +84,8 @@ GfxInfo::GetAdapterDriver2(nsAString & aAdapterDriver)
 NS_IMETHODIMP
 GfxInfo::GetAdapterDriverVersion(nsAString & aAdapterDriverVersion)
 {
-  return NS_ERROR_FAILURE;
+  aAdapterDriverVersion.AppendLiteral("generic");
+  return NS_OK;
 }
 
 NS_IMETHODIMP
@@ -109,7 +109,8 @@ GfxInfo::GetAdapterDriverDate2(nsAString & aAdapterDriverDate)
 NS_IMETHODIMP
 GfxInfo::GetAdapterVendorID(nsAString & aAdapterVendorID)
 {
-  return NS_ERROR_FAILURE;
+  aAdapterVendorID.AppendLiteral("generic");;
+  return NS_OK;
 }
 
 NS_IMETHODIMP
@@ -121,7 +122,7 @@ GfxInfo::GetAdapterVendorID2(nsAString & aAdapterVendorID)
 NS_IMETHODIMP
 GfxInfo::GetAdapterDeviceID(nsAString & aAdapterDeviceID)
 {
-  return NS_ERROR_FAILURE;
+  aAdapterDeviceID.AppendLiteral("generic");
   return NS_OK;
 }
 
@@ -153,10 +154,10 @@ const nsTArray<GfxDriverInfo>&
 GfxInfo::GetGfxDriverInfo()
 {
   if (mDriverInfo->IsEmpty()) {
-    APPEND_TO_DRIVER_BLOCKLIST2(OperatingSystem::Ios,
-      (nsAString&) GfxDriverInfo::GetDeviceVendor(VendorAll), GfxDriverInfo::allDevices,
-      nsIGfxInfo::FEATURE_OPENGL_LAYERS, nsIGfxInfo::FEATURE_STATUS_OK,
-      DRIVER_COMPARISON_IGNORED, GfxDriverInfo::allDriverVersions, "FEATURE_EMPTY_DRIVER" );
+    APPEND_TO_DRIVER_BLOCKLIST2(OperatingSystem::Unknown,
+                                (nsAString&) GfxDriverInfo::GetDeviceVendor(VendorAll), GfxDriverInfo::allDevices,
+                                nsIGfxInfo::FEATURE_OPENGL_LAYERS, nsIGfxInfo::FEATURE_STATUS_OK,
+                                DRIVER_COMPARISON_IGNORED, GfxDriverInfo::allDriverVersions, "FEATURE_EMPTY_DRIVER" );
   }
 
   return *mDriverInfo;
@@ -174,7 +175,7 @@ GfxInfo::GetFeatureStatusImpl(int32_t aFeature,
   aSuggestedDriverVersion.SetIsVoid(true);
   *aStatus = nsIGfxInfo::FEATURE_STATUS_UNKNOWN;
   if (aOS)
-    *aOS = OperatingSystem::Ios;
+    *aOS = OperatingSystem::Unknown;
 
   if (mShutdownOccurred) {
     return NS_OK;
