@@ -9,8 +9,6 @@
 #include "nsBaseScreen.h"
 #include "nsIScreenManager.h"
 #include "nsCOMPtr.h"
-#include "nsRect.h"
-#include "nsView.h"
 
 class nsNoneScreen : public nsBaseScreen
 {

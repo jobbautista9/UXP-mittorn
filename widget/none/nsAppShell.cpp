@@ -50,9 +50,9 @@ nsAppShell::ScheduleNativeEventCallback()
 bool
 nsAppShell::ProcessNextNativeEvent(bool aMayWait)
 {
-  if (mTerminated)
+  if (mTerminated) {
     return false;
-
+  }
 
   return false;
 }
@@ -60,8 +60,9 @@ nsAppShell::ProcessNextNativeEvent(bool aMayWait)
 NS_IMETHODIMP
 nsAppShell::Exit(void)
 {
-  if (mTerminated)
+  if (mTerminated) {
     return NS_OK;
+  }
 
   mTerminated = true;
   return nsBaseAppShell::Exit();
