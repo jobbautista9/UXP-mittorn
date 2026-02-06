@@ -23,7 +23,7 @@
 #if defined(OS_LINUX) || defined(OS_BSD) || defined (OS_SOLARIS)
 #if defined(MOZ_WIDGET_GTK)
 #include "base/message_pump_glib.h"
-#elif defined(MOZ_WIDGET_NONE)
+#elif defined(MOZ_TOOLKIT_GENERIC)
 #include "base/message_pump_android.h"
 #endif
 #endif
