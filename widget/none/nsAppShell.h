@@ -9,7 +9,8 @@
 
 #ifndef nsAppShell_h_
 #define nsAppShell_h_
-
+#include "mozilla/Mutex.h"
+#include "mozilla/CondVar.h"
 #include "nsBaseAppShell.h"
 
 
@@ -25,6 +26,7 @@ public:
   NS_IMETHOD Exit(void);
 
   static nsAppShell* gAppShell;
+  void NotifyEvent();
 
 protected:
   virtual ~nsAppShell();
@@ -33,8 +35,11 @@ protected:
 public:
   virtual bool ProcessNextNativeEvent(bool aMayWait);
 protected:
-
-  bool               mTerminated;
+  mozilla::Mutex mNotifyMutex;
+  mozilla::CondVar mNotifyCondVar;
+  unsigned short mNativeEventCount;
+  bool mNotify;
+  bool mTerminated;
 };
 
 #endif // nsAppShell_h_

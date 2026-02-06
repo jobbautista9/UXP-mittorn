@@ -18,7 +18,11 @@ nsAppShell::ResumeNative(void)
 }
 
 nsAppShell::nsAppShell()
-  : mTerminated(false)
+  : mNotifyMutex("AppShell.NotifyMutex")
+  , mNotifyCondVar(mNotifyMutex, "AppShell.NotifyCondVar")
+  , mNativeEventCount(0)
+  , mNotify(false)
+  , mTerminated(false)
 {
   gAppShell = this;
 }
@@ -42,6 +46,20 @@ nsAppShell::Init()
 void
 nsAppShell::ScheduleNativeEventCallback()
 {
+  mozilla::MutexAutoLock lock(mNotifyMutex);
+
+  mNativeEventCount++;
+  mNotify = true;
+  mNotifyCondVar.Notify();
+}
+
+// public
+void nsAppShell::NotifyEvent()
+{
+  mozilla::MutexAutoLock lock(mNotifyMutex);
+
+  mNotify = true;
+  mNotifyCondVar.Notify();
 }
 
 // ProcessNextNativeEvent
@@ -54,7 +72,20 @@ nsAppShell::ProcessNextNativeEvent(bool aMayWait)
     return false;
   }
 
-  return false;
+  // we do not have any platform events. so only wait on CondVar
+  mozilla::MutexAutoLock lock(mNotifyMutex);
+
+  while (aMayWait && !mNotify) {
+    mNotifyCondVar.Wait();
+  }
+
+  mNotify = false;
+
+  while (mNativeEventCount && mNativeEventCount--) {
+    NativeEventCallback();
+  }
+
+  return true;
 }
 
 NS_IMETHODIMP
@@ -71,7 +102,7 @@ nsAppShell::Exit(void)
 
 // Used by IPC code
 namespace mozilla {
-
+// ui pump does not seems to be used now, but implement it just in case
 bool ProcessNextEvent()
 {
     return nsAppShell::gAppShell->ProcessNextNativeEvent(true) ? true : false;
@@ -79,7 +110,7 @@ bool ProcessNextEvent()
 
 void NotifyEvent()
 {
-//    nsAppShell::gAppShell->NotifyNativeEvent();
+  nsAppShell::gAppShell->NotifyEvent();
 }
 
 }
