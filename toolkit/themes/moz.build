@@ -27,6 +27,9 @@ elif toolkit in ('gtk2', 'gtk3'):
     DIRS += ['linux']
 else:
     DIRS += ['windows']
+    if toolkit != 'windows':
+        # enable generic theme workarounds
+        DIRS += ['generic/global']
 
     if CONFIG['MOZ_THEME_FASTSTRIPE']:
         DIRS += ['faststripe/global']

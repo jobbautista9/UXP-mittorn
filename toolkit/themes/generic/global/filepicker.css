@@ -1,0 +1,92 @@
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
+/* ===== filepicker.css =================================================
+  == Styles used by the File Picker dialog.
+  ======================================================================= */
+
+@import url("chrome://global/skin/");
+
+@namespace url("http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul");
+
+/* ::::: column widths ::::: */
+
+#FilenameColumn,
+#ContentLengthColumn,
+#LastModifiedDateColumn {
+  width: 100px;
+}
+
+/* ::::: file/directory items ::::: */
+
+treechildren::-moz-tree-image(treecolAutoCompleteValue),
+treechildren::-moz-tree-image(FilenameColumn) {
+  padding-right: 2px;
+  margin: 0px 2px;
+  width: 16px;
+  height: 16px;
+}
+
+treechildren::-moz-tree-image(treecolAutoCompleteValue, directory),
+treechildren::-moz-tree-image(FilenameColumn, directory) {
+  list-style-image: url("chrome://global/skin/dirListing/folder.png");
+}
+
+treechildren::-moz-tree-image(treecolAutoCompleteValue, file),
+treechildren::-moz-tree-image(FilenameColumn, file) {
+  height: 16px;
+  width: 16px;
+  list-style-image: url("chrome://global/skin/icons/folder-item.png");
+  -moz-image-region: rect(0px, 16px, 16px, 0px);
+  -moz-margin-start: 2px;
+}
+
+/* ::::: button items ::::: */
+
+/* up-button */
+.up-button {
+  list-style-image: url("chrome://global/skin/dirListing/up.png");
+  width: 22px;
+  height: 22px;
+  min-width: 0;
+  margin: 0;
+}
+
+/* home-button */
+
+.home-button {
+  list-style-image: url("chrome://global/skin/dirListing/remote.png");
+  min-width: 0;
+  width: 22px;
+  height: 22px;
+  margin: 0;
+}
+
+/* new-dir-button */
+
+.new-dir-button {
+  list-style-image: url("chrome://global/skin/Filepicker.png");
+  width: 22px;
+  height: 22px;
+  min-width: 0;
+  margin: 0;
+  margin-right:6px;
+}
+
+
+.up-button .button-box,
+.home-button .button-box,
+.new-dir-button .button-box {
+  padding-top: 0;
+  padding-bottom: 0;
+  padding-inline-start: 0;
+  padding-inline-end: 0;
+}
+
+.up-button .button-box .button-icon,
+.home-button .button-box .button-icon,
+.new-dir-button .button-box .button-icon {
+  width: 16px;
+  height: 16px;
+}

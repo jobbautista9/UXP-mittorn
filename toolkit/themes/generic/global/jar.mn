@@ -1,0 +1,34 @@
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this
+# file, You can obtain one at http://mozilla.org/MPL/2.0/.
+
+toolkit.jar:
+% skin global classic/1.0 %skin/classic/global/
+# Inherit from windows, but override wrong/missing styles
+*  skin/classic/global/scrollbars.css                    (xulscrollbars.css)
+*  skin/classic/global/menu.css                          (menu.css)
+
+# Default faststripe/winstripe arrows looks too small, override it with osx
+   skin/classic/global/arrow/arrow-dn.gif                   (../../osx/global/arrow/arrow-dn.gif)
+   skin/classic/global/arrow/arrow-dn-dis.gif               (../../osx/global/arrow/arrow-dn-dis.gif)
+   skin/classic/global/arrow/arrow-dn-hov.gif               (../../osx/global/arrow/arrow-dn.gif)
+   skin/classic/global/arrow/arrow-dn-sharp.gif             (../../osx/global/arrow/arrow-dn-sharp.gif)
+   skin/classic/global/arrow/arrow-down.png                 (../../windows/global/arrow/arrow-down.png)
+   skin/classic/global/arrow/arrow-lft.gif                  (../../osx/global/arrow/arrow-lft.gif)
+   skin/classic/global/arrow/arrow-lft-dis.gif              (../../osx/global/arrow/arrow-lft-dis.gif)
+   skin/classic/global/arrow/arrow-lft-hov.gif              (../../osx/global/arrow/arrow-lft.gif)
+   skin/classic/global/arrow/arrow-lft-sharp.gif            (../../osx/global/arrow/arrow-lft-sharp.gif)
+   skin/classic/global/arrow/arrow-lft-sharp-end.gif        (../../osx/global/arrow/arrow-lft-sharp-end.gif)
+   skin/classic/global/arrow/arrow-rit.gif                  (../../osx/global/arrow/arrow-rit.gif)
+   skin/classic/global/arrow/arrow-rit-dis.gif              (../../osx/global/arrow/arrow-rit-dis.gif)
+   skin/classic/global/arrow/arrow-rit-hov.gif              (../../osx/global/arrow/arrow-rit.gif)
+   skin/classic/global/arrow/arrow-rit-sharp.gif            (../../osx/global/arrow/arrow-rit-sharp.gif)
+   skin/classic/global/arrow/arrow-rit-sharp-end.gif        (../../osx/global/arrow/arrow-rit-sharp-end.gif)
+   skin/classic/global/arrow/arrow-up.gif                   (../../osx/global/arrow/arrow-up.gif)
+   skin/classic/global/arrow/arrow-up-dis.gif               (../../osx/global/arrow/arrow-up-dis.gif)
+   skin/classic/global/arrow/arrow-up-hov.gif               (../../osx/global/arrow/arrow-up.gif)
+   skin/classic/global/arrow/arrow-up-sharp.gif             (../../osx/global/arrow/arrow-up-sharp.gif)
+
+# platform-agnostic filepicker style (without gtk icons)
+   skin/classic/global/filepicker.css
+   skin/classic/global/Filepicker.png                       (../../linux/global/filepicker/Filepicker.png)

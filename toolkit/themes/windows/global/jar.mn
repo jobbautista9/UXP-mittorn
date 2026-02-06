@@ -11,7 +11,9 @@ toolkit.jar:
   skin/classic/global/checkbox.css
   skin/classic/global/dropmarker.css
   skin/classic/global/groupbox.css
+#ifndef MOZ_TOOLKIT_GENERIC
 * skin/classic/global/menu.css
+#endif
   skin/classic/global/menulist.css
 * skin/classic/global/popup.css
   skin/classic/global/radio.css
