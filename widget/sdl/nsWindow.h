@@ -76,6 +76,10 @@ public:
   static bool OnGlobalEvent(const SDL_Event *ev);
   static void HandleInvalidWindows();
 
+  NS_IMETHODIMP_(TextEventDispatcherListener*)
+  GetNativeTextEventDispatcherListener() override;
+
+
 protected:
   virtual ~nsWindow();
   nsWindow *FindTopLevel();
@@ -88,6 +92,7 @@ protected:
   nsTArray<nsWindow *> mChildren;
   nsWindow *mParent;
   InputContext mInputContext;
+  RefPtr<TextEventDispatcherListener>mTextEventDispatcherListener;
 
   void OnSizeChanged(const mozilla::gfx::IntSize &aSize);
   bool OnEvent(const SDL_Event *ev);

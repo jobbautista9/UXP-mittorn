@@ -18,6 +18,7 @@
 #include "nsSDLKeymap.h"
 #include "nsSDLCursors.h"
 #include "mozilla/MouseEvents.h"
+#include "mozilla/TextEventDispatcher.h"
 
 #include "GeckoProfiler.h"
 #include "ClientLayerManager.h"
@@ -408,8 +409,12 @@ NS_IMETHODIMP_(void)
 nsWindow::SetInputContext(const InputContext& aContext,
                           const InputContextAction& aAction)
 {
-    //TODO: actually show VKB
-    mInputContext = aContext;
+  mInputContext = aContext;
+  if (aAction.mFocusChange == InputContextAction::LOST_FOCUS) {
+    SDL_StopTextInput();
+  } else {
+    SDL_StartTextInput();
+  }
 }
 
 NS_IMETHODIMP_(mozilla::widget::InputContext)
@@ -734,6 +739,18 @@ bool nsWindow::OnEvent(const SDL_Event *ev)
     event.mIsRepeat = ev->key.repeat;
     event.mModifiers = sInputState.modifiers;
 
+    if (ev->type == SDL_KEYDOWN) {
+        // commit any pending composition
+        // without this libeditor blows up
+        nsEventStatus status;
+        RefPtr<TextEventDispatcher> dispatcher = GetTextEventDispatcher();
+        nsresult rv = dispatcher->BeginNativeInputTransaction();
+        dispatcher->DispatchKeyboardEvent(eKeyDown, event, status);
+        if (dispatcher->IsComposing()) {
+          dispatcher->CommitComposition(status, nullptr, &event);
+        }
+    }
+
     DispatchInputEvent(&event);
 
     // prepare keyPress event
@@ -795,6 +812,7 @@ bool nsWindow::OnEvent(const SDL_Event *ev)
         event.mIsRepeat = sInputState.keyPressRepeat;
         DispatchInputEvent(&event);
       } else { // compose text without keypresses
+#if 0
         WidgetCompositionEvent event(true, eCompositionStart, this);
         event.mTime = ev->text.timestamp;
         nsEventStatus status = nsEventStatus_eIgnore;
@@ -802,8 +820,50 @@ bool nsWindow::OnEvent(const SDL_Event *ev)
         event.mData = text;
         event.mMessage = eCompositionCommit;
         DispatchEvent(&event, status);
+#else
+        RefPtr<TextEventDispatcher> dispatcher = GetTextEventDispatcher();
+        nsresult rv = dispatcher->BeginNativeInputTransaction();
+        if (!text.Length()) {
+            break;
+        }
+        WidgetEventTime eventTime;
+        eventTime.mTime = ev->text.timestamp;
+        nsEventStatus status = nsEventStatus_eIgnore;
+        dispatcher->CommitComposition(status, &text, &eventTime);
+#endif
       }
     }
+    break;
+  case SDL_TEXTEDITING:
+  {
+    NS_ConvertUTF8toUTF16 text(ev->edit.text);
+    RefPtr<TextEventDispatcher> dispatcher = GetTextEventDispatcher();
+    nsresult rv = dispatcher->BeginNativeInputTransaction();
+    WidgetEventTime eventTime;
+    eventTime.mTime = ev->text.timestamp;
+    nsEventStatus status = nsEventStatus_eIgnore;
+    int len = text.Length();
+    if (!len) {
+        break;
+    }
+    RefPtr<TextRangeArray> textRangeArray = new TextRangeArray();
+    TextRange range;
+    range.mStartOffset = ev->edit.start;
+    range.mEndOffset = ev->edit.start + ev->edit.length;
+    if (range.mEndOffset > len) {
+      range.mEndOffset = len;
+    }
+    if (range.mStartOffset < 0) {
+      range.mStartOffset = 0;
+    }
+    range.mRangeType = TextRangeType::eRawClause;
+    range.mRangeStyle.mLineStyle = TextRangeStyle::LINESTYLE_SOLID;
+    range.mRangeStyle.mDefinedStyles = TextRangeStyle::DEFINED_LINESTYLE;
+    textRangeArray->AppendElement(range);
+    dispatcher->SetPendingComposition(text, textRangeArray);
+    dispatcher->FlushPendingComposition(status, &eventTime);
+  }
+  break;
   case SDL_WINDOWEVENT:
     switch (ev->window.event) {
     case SDL_WINDOWEVENT_EXPOSED:
@@ -1008,9 +1068,12 @@ bool nsWindow::OnGlobalEvent(const SDL_Event *ev)
     if (ev->drop.file)
       dropFree = true;
     break;
-  case SDL_TEXTEDITING_EXT:
-    textEditFree = true;
+  case SDL_TEXTEDITING:
+    winId = ev->edit.windowID;
     break;
+  case SDL_TEXTEDITING_EXT:
+    winId = ev->editExt.windowID;
+    textEditFree = true;
     break;
   }
 
@@ -1041,4 +1104,40 @@ bool nsWindow::OnGlobalEvent(const SDL_Event *ev)
   }
 
   return true;
+}
+
+
+// stub TextEventDispatcherListener to make TextEventDispatcher happy
+class IMContextWrapper final : public nsWindow::TextEventDispatcherListener
+{
+public:
+  // TextEventDispatcherListener implementation
+  NS_DECL_ISUPPORTS
+
+      NS_IMETHOD NotifyIME(nsWindow::TextEventDispatcher* aTextEventDispatcher,
+                       const nsWindow::IMENotification& aNotification) override {
+        return NS_OK;
+      }
+  NS_IMETHOD_(void) OnRemovedFrom(
+        nsWindow::TextEventDispatcher* aTextEventDispatcher) override {
+  }
+  NS_IMETHOD_(void) WillDispatchKeyboardEvent(
+    nsWindow::TextEventDispatcher* aTextEventDispatcher,
+    WidgetKeyboardEvent& aKeyboardEvent,
+    uint32_t aIndexOfKeypress,
+    void* aData) override {
+  }
+private:
+  ~IMContextWrapper() {}
+};
+
+NS_IMPL_ISUPPORTS(IMContextWrapper, TextEventDispatcherListener, nsISupportsWeakReference);
+
+NS_IMETHODIMP_(nsWindow::TextEventDispatcherListener*)
+nsWindow::GetNativeTextEventDispatcherListener()
+{
+  if(!mTextEventDispatcherListener) {
+    mTextEventDispatcherListener = new IMContextWrapper();
+  }
+  return mTextEventDispatcherListener;
 }
