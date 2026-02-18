@@ -17,6 +17,7 @@ class nsSDLScreen : public nsBaseScreen
   int mIndex;
   nsIntRect mRect;
   nsIntRect mAvailRect;
+  uint32_t mRotation;
 
 public:
   ~nsSDLScreen () {}
@@ -37,6 +38,7 @@ public:
   {
     return GetContentsScaleFactor(aScaleFactor);
   }
+  NS_IMETHOD GetRotation(uint32_t* aRotation);
   friend class nsScreenManager;
 };
 

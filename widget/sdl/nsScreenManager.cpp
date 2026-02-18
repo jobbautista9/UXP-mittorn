@@ -44,6 +44,12 @@ nsSDLScreen::GetAvailRectDisplayPix(int32_t *outX, int32_t *outY, int32_t *outWi
 }
 
 NS_IMETHODIMP
+nsSDLScreen::GetRotation(uint32_t *aRotation)
+{
+  *aRotation = mRotation;
+  return NS_OK;
+}
+NS_IMETHODIMP
 nsSDLScreen::GetPixelDepth(int32_t *aPixelDepth)
 {
   // Close enough.
@@ -134,6 +140,36 @@ nsresult nsScreenManager::UpdateScreens()
     screen->mIndex = i;
     SDL_GetDisplayBounds(i, (SDL_Rect *)&screen->mRect);
     SDL_GetDisplayUsableBounds(i, (SDL_Rect *)&screen->mAvailRect);
+    SDL_DisplayOrientation orientation = SDL_GetDisplayOrientation(i);
+
+    uint32_t oldRotation = screen->mRotation;
+
+    switch(orientation) {
+      case SDL_ORIENTATION_LANDSCAPE:
+      case SDL_ORIENTATION_UNKNOWN:
+        screen->mRotation = nsIScreen::ROTATION_0_DEG;
+        break;
+      case SDL_ORIENTATION_LANDSCAPE_FLIPPED:
+        screen->mRotation = nsIScreen::ROTATION_180_DEG;
+        break;
+      case SDL_ORIENTATION_PORTRAIT:
+        screen->mRotation = nsIScreen::ROTATION_90_DEG;
+        break;
+      case SDL_ORIENTATION_PORTRAIT_FLIPPED:
+        screen->mRotation = nsIScreen::ROTATION_270_DEG;
+        break;
+    }
+
+    if (screen->mRotation == oldRotation ) {
+      continue;
+    }
+    for (int j = 0; j < nsAppShell::gAppShell->mTopLevelWindows.Length(); j++) {
+      nsWindow *nsWin = (nsWindow *)nsAppShell::gAppShell->mTopLevelWindows[j];
+      SDL_Window *win = (SDL_Window *)nsWin->GetNativeData(NS_NATIVE_WIDGET);
+      if (win && SDL_GetWindowDisplayIndex(win) == i) {
+        nsWin->ScreenRotationChanged(i, screen->mRotation);
+      }
+    }
   }
   mNumScreens = numDisplays;
   return NS_OK;

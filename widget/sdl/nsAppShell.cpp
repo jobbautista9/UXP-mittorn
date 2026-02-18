@@ -3,11 +3,14 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+#include "prenv.h"
 #include "nsAppShell.h"
 #include "nsScreenManager.h"
 #include "nsWindow.h"
+#include "mozilla/Preferences.h"
 
 nsAppShell *nsAppShell::gAppShell = NULL;
+int nsAppShell::sForcedFullscreen = -1;
 
 // user sdl events
 #define APPSHELL_SDL_NOTIFY_NATICE_CB 1
@@ -38,6 +41,12 @@ nsresult nsAppShell::Init() {
   SDL_SetHint(SDL_HINT_MOUSE_AUTO_CAPTURE, "0");
   // allow ui interaction when accepting focus
   SDL_SetHint(SDL_HINT_MOUSE_FOCUS_CLICKTHROUGH, "1");
+  const char *env = PR_GetEnv("MOZ_SDL_FORCE_FULLSCREEN");
+  if (env) {
+    sForcedFullscreen = atoi(env);
+  } else {
+    mozilla::Preferences::AddIntVarCache(&sForcedFullscreen, "widget.sdl.forcedFullscreen");
+  }
   return nsBaseAppShell::Init();
 }
 

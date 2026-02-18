@@ -38,6 +38,10 @@ public:
   nsTArray<InvalidWindow> mInvalidWindows;
   nsTArray<nsWindow *> mTopLevelWindows;
 
+  static inline int GetForcedFullscreen() {
+    return sForcedFullscreen;
+  }
+
 protected:
   virtual ~nsAppShell();
 
@@ -47,6 +51,7 @@ public:
   virtual bool ProcessNextNativeEvent(bool aMayWait);
 
 protected:
+  static int sForcedFullscreen;
   bool mTerminated;
 
 private:

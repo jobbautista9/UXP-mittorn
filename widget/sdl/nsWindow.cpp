@@ -2,7 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-
+#include "prenv.h"
 #include "nsWindow.h"
 #include "nsAppShell.h"
 
@@ -19,11 +19,13 @@
 #include "nsSDLCursors.h"
 #include "mozilla/MouseEvents.h"
 #include "mozilla/TextEventDispatcher.h"
+#include "mozilla/Preferences.h"
 
 #include "GeckoProfiler.h"
 #include "ClientLayerManager.h"
 #include "nsDragService.h"
-
+#include "BasicLayers.h"
+#include "nsIScreenManager.h"
 using namespace mozilla;
 using namespace mozilla::dom;
 using namespace mozilla::layers;
@@ -36,7 +38,10 @@ NS_IMPL_ISUPPORTS_INHERITED0(nsWindow, Inherited)
 nsWindow::nsWindow()
   : mNativeWindow(nullptr)
   , mVisible(false)
+  , mScheduleResize(false)
+  , mRotation(ROTATION_0)
   , mParent(nullptr)
+  , mDrawableSize(0,0)
 {
 }
 
@@ -183,17 +188,24 @@ nsWindow::ConfigureChildren(const nsTArray<nsIWidget::Configuration>& config)
   return NS_OK;
 }
 
+
 NS_IMETHODIMP
 nsWindow::Show(bool aState)
 {
-  if (mNativeWindow && mVisible != aState) {
-    if (aState) {
-      SDL_ShowWindow(mNativeWindow);
-    } else{
-      SDL_HideWindow(mNativeWindow);
-    }
+  if (mVisible == aState) {
+    return NS_OK;
   }
   mVisible = aState;
+  if (!mNativeWindow) {
+    return NS_OK;
+  }
+  if (aState) {
+    SDL_ShowWindow(mNativeWindow);
+    ScheduleResize();
+  } else {
+    SDL_HideWindow(mNativeWindow);
+  }
+
   return NS_OK;
 }
 
@@ -257,12 +269,11 @@ NS_IMETHODIMP nsWindow::Resize(double aWidth, double aHeight, bool aRepaint)
 
   mBounds.width = aWidth;
   mBounds.height = aHeight;
-
-  ReportSizeEvent();
-
   if (mNativeWindow) {
     ScheduleResize();
   }
+
+  ReportSizeEvent();
 
   return NS_OK;
 }
@@ -287,6 +298,26 @@ nsWindow::SetSizeMode(nsSizeMode aMode)
  * to call actual resize once */
 void nsWindow::ScheduleResize()
 {
+  if (nsAppShell::GetForcedFullscreen() > 0) {
+    if (!mDrawableSize.width && mVisible) {
+      SDL_SetWindowFullscreen(mNativeWindow, SDL_WINDOW_FULLSCREEN_DESKTOP);
+      SDL_PumpEvents();
+      SDL_GetWindowSizeInPixels(mNativeWindow, &mDrawableSize.width, &mDrawableSize.height);
+
+      // fake fullscreen requested, revert back to windowed
+      if (nsAppShell::GetForcedFullscreen() == 2) {
+        SDL_SetWindowFullscreen(mNativeWindow, 0);
+        SDL_SetWindowSize(mNativeWindow, mDrawableSize.width, mDrawableSize.height);
+      }
+      RefPtr<nsIScreen> scr = GetWidgetScreen();
+      uint32_t id, rot;
+      scr->GetId(&id);
+      scr->GetRotation(&rot);
+      ScreenRotationChanged(id, rot);
+    }
+    return;
+  }
+  printf("ScheduleResize %d %d\n",mBounds.width, mBounds.height);
   mScheduleResize = true;
   for (uint32_t i = 0; i < nsAppShell::gAppShell->mInvalidWindows.Length(); ++i) {
     if(nsAppShell::gAppShell->mInvalidWindows[i].window == this) {
@@ -360,6 +391,16 @@ void nsWindow::ReportSizeModeEvent(nsSizeMode aMode)
     }
     mWidgetListener->SizeModeChanged(theMode);
   }
+}
+
+
+LayoutDeviceIntRect nsWindow::GetNaturalBounds() {
+/* TODO: basic compositor's BeginFrame is still relies on nsIWidget::GetClientSize (probably a bug?),
+  so this only works in OpenGL for now */
+   if (mDrawableSize.width) {
+     return {0, 0, mDrawableSize.width, mDrawableSize.height};
+   }
+   return mBounds;
 }
 
 void nsWindow::ReportSizeEvent()
@@ -552,6 +593,76 @@ void* nsWindow::GetNativeData(uint32_t aDataType)
   }
 
   return retVal;
+}
+LayoutDeviceIntPoint nsWindow::TransformCoord(int x, int y) {
+  const LayoutDeviceIntSize &bounds = mNativeWindow? mDrawableSize : mParent->mDrawableSize;
+  ScreenRotation rot = (ScreenRotation)(mNativeWindow? mRotation: mParent->mRotation);
+  switch(rot) {
+     case mozilla::ROTATION_0:
+        return {nscoord(x), nscoord(y)};
+     case mozilla::ROTATION_90:
+        return {nscoord(y), nscoord(bounds.width - x)};
+     case mozilla::ROTATION_180:
+        return {nscoord(bounds.width - x), nscoord(bounds.height - y)};
+     case mozilla::ROTATION_270:
+        return {nscoord(bounds.height - y), nscoord(x)};
+  }
+  return {};
+}
+
+void nsWindow::HandleResize(int aW, int aH) {
+  int w, h;
+
+  if (mRotation == mozilla::ROTATION_90 || mRotation == mozilla::ROTATION_270) {
+    w = aH, h = aW;
+  } else {
+    w = aW, h = aH;
+  }
+  mBounds.width = w, mBounds.height = h;
+
+  for (uint32_t i = 0; i < mChildren.Length(); ++i) {
+      mChildren[i]->mBounds.width = w;
+      mChildren[i]->mBounds.height = h;
+      mChildren[i]->ReportSizeEvent();
+  }
+  ReportSizeEvent();
+
+  if (!mLayerManager) {
+     return;
+  }
+  MutexAutoLock lock(nsAppShell::gAppShell->mEventsMutex);
+  if (ClientLayerManager *mgr = mLayerManager->AsClientLayerManager()) {
+    mgr->SetDefaultTargetConfiguration(BufferMode::BUFFER_NONE, (ScreenRotation)mRotation);
+  }
+}
+
+static int GetClientRotation(int aDisplayIndex) {
+  const char *env = PR_GetEnv("MOZ_SDL_FORCE_ROTATION");
+  if (env) {
+    return atoi(env);
+  } else {
+    char str[256] = "";
+    snprintf(str, 255, "widget.sdl.displayOverrides.%d.rotation", aDisplayIndex);
+    return mozilla::Preferences::GetInt(str, 0);
+  }
+}
+
+void nsWindow::ScreenRotationChanged(int aScreenIndex, uint32_t aRotation) {
+  printf("screen rotation %d %d\n", aScreenIndex, aRotation);
+  uint32_t rotation = GetClientRotation(aScreenIndex);
+  if (rotation < 4) {
+    if (mRotation == rotation) {
+      return;
+    }
+    mRotation = rotation;
+  } else {
+    // guess
+    bool swapAxis = mDrawableSize.height > mDrawableSize.width;
+    mRotation = swapAxis? (aRotation + 3) % 4: aRotation;
+  }
+
+  HandleResize(mDrawableSize.width, mDrawableSize.height);
+  Invalidate(mBounds);
 }
 
 /* track mouse state while dragging outside window
@@ -884,10 +995,9 @@ bool nsWindow::OnEvent(const SDL_Event *ev)
       }
       break;
     case SDL_WINDOWEVENT_RESIZED:
-      mBounds.width = ev->window.data1;
-      mBounds.height = ev->window.data2;
-      if (mNativeWindow) {
-        ReportSizeEvent();
+      if (mNativeWindow && nsAppShell::GetForcedFullscreen() < 1) {
+        SDL_GetWindowSizeInPixels(mNativeWindow, &mDrawableSize.width, &mDrawableSize.height);
+        HandleResize(ev->window.data1, ev->window.data2);
       }
       break;
     case SDL_WINDOWEVENT_LEAVE:
@@ -907,8 +1017,7 @@ bool nsWindow::OnEvent(const SDL_Event *ev)
     WidgetMouseEvent event(true, eMouseMove, this, WidgetMouseEvent::eReal,
                            WidgetMouseEvent::eNormal);
 
-    event.mRefPoint.x = nscoord(ev->motion.x);
-    event.mRefPoint.y = nscoord(ev->motion.y);
+    event.mRefPoint = TransformCoord(ev->motion.x, ev->motion.y);
     event.mModifiers = sInputState.modifiers;
     event.mTime = ev->motion.timestamp;
 
@@ -940,9 +1049,7 @@ bool nsWindow::OnEvent(const SDL_Event *ev)
     WidgetMouseEvent event(
         true, ev->type == SDL_MOUSEBUTTONUP ? eMouseUp : eMouseDown, this,
         WidgetMouseEvent::eReal);
-
-    event.mRefPoint.x = nscoord(ev->button.x);
-    event.mRefPoint.y = nscoord(ev->button.y);
+    event.mRefPoint = TransformCoord(ev->button.x, ev->button.y);
     event.mClickCount = ev->button.clicks;
     event.mModifiers = sInputState.modifiers;
     event.mTime = ev->button.timestamp;
@@ -962,8 +1069,7 @@ bool nsWindow::OnEvent(const SDL_Event *ev)
     // right menu click on linux should also pop up a context menu
     if (event.button == WidgetMouseEvent::eRightButton) {
       WidgetMouseEvent contextMenuEvent(true, eContextMenu, this, WidgetMouseEvent::eReal);
-      contextMenuEvent.mRefPoint.x = nscoord(ev->button.x);
-      contextMenuEvent.mRefPoint.y = nscoord(ev->button.y);
+      contextMenuEvent.mRefPoint = TransformCoord(ev->button.x, ev->button.y);
       contextMenuEvent.mClickCount = ev->button.clicks;
       contextMenuEvent.mTime = ev->button.timestamp;
       DispatchInputEvent(&contextMenuEvent);
@@ -988,8 +1094,7 @@ bool nsWindow::OnEvent(const SDL_Event *ev)
     int posX, posY;
     SDL_GetMouseState(&posX, &posY);
 
-    wheelEvent.mRefPoint.x = nscoord(posX);
-    wheelEvent.mRefPoint.y = nscoord(posY);
+    wheelEvent.mRefPoint = TransformCoord(posX, posY);
     wheelEvent.mModifiers = sInputState.modifiers;
     wheelEvent.mTime = ev->wheel.timestamp;
 
@@ -1024,7 +1129,16 @@ nsWindow::GetLayerManager(PLayerTransactionChild* aShadowManager,
       return mLayerManager;
     }
 
-    return nsBaseWidget::GetLayerManager(aShadowManager, aBackendHint, aPersistence);
+    LayerManager *ret = nsBaseWidget::GetLayerManager(aShadowManager, aBackendHint, aPersistence);
+    if (!ret ||  mRotation == ROTATION_0) {
+      return ret;
+    }
+    if (ClientLayerManager *mgr = ret->AsClientLayerManager()) {
+      mgr->SetDefaultTargetConfiguration(BufferMode::BUFFER_NONE, (ScreenRotation)mRotation);
+    } else if (BasicLayerManager *mgr = ret->AsBasicLayerManager()) {
+      mgr->SetDefaultTargetConfiguration(BufferMode::BUFFER_NONE, (ScreenRotation)mRotation);
+    }
+    return ret;
   }
   // never create LayerManagers for child widgets
   if (mParent) {

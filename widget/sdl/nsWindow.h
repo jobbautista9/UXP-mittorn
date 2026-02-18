@@ -78,7 +78,8 @@ public:
 
   NS_IMETHODIMP_(TextEventDispatcherListener*)
   GetNativeTextEventDispatcherListener() override;
-
+  void ScreenRotationChanged(int aScreenIndex, uint32_t aRotation);
+  LayoutDeviceIntRect GetNaturalBounds() override;
 
 protected:
   virtual ~nsWindow();
@@ -89,6 +90,7 @@ protected:
   SDL_Surface *mSurface;
   bool mVisible;
   bool mScheduleResize;
+  uint32_t mRotation;
   nsTArray<nsWindow *> mChildren;
   nsWindow *mParent;
   InputContext mInputContext;
@@ -98,6 +100,9 @@ protected:
   bool OnEvent(const SDL_Event *ev);
   void ExposeRegion(LayoutDeviceIntRegion);
   void ScheduleResize();
+  void HandleResize(int aWidth, int aHeight);
+  LayoutDeviceIntPoint TransformCoord(int aX, int aY);
+  LayoutDeviceIntSize mDrawableSize;
 };
 
 #endif /* NSWINDOW_H_ */
