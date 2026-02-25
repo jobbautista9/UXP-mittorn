@@ -4291,6 +4291,12 @@ nsDocumentViewer::ShouldAttachToTopLevel()
   if (!containerItem)
     return false;
 
+  // SDL does not have native child widgets,
+  // always attach to prevent using fake child widgets
+#ifdef MOZ_WIDGET_SDL
+  return true;
+#endif
+
   // We always attach when using puppet widgets
   if (nsIWidget::UsePuppetWidgets())
     return true;

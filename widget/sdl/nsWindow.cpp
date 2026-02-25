@@ -413,9 +413,12 @@ LayoutDeviceIntRect nsWindow::GetNaturalBounds() {
 
 void nsWindow::ReportSizeEvent()
 {
+  LayoutDeviceIntRect innerBounds = GetClientBounds();
   if (mWidgetListener) {
-    LayoutDeviceIntRect innerBounds = GetClientBounds();
     mWidgetListener->WindowResized(this, innerBounds.width, innerBounds.height);
+  }
+  if (mAttachedWidgetListener) {
+    mAttachedWidgetListener->WindowResized(this, innerBounds.width, innerBounds.height);
   }
 }
 
@@ -447,8 +450,9 @@ nsWindow::DispatchEvent(mozilla::WidgetGUIEvent* aEvent,
   aStatus = nsEventStatus_eIgnore;
   nsCOMPtr<nsIWidget> kungFuDeathGrip(aEvent->mWidget);
 
-  if (mWidgetListener) {
-    aStatus = mWidgetListener->HandleEvent(aEvent, mUseAttachedEvents);
+  nsIWidgetListener* listener = mAttachedWidgetListener ? mAttachedWidgetListener : mWidgetListener;
+  if (listener) {
+    aStatus = listener->HandleEvent(aEvent, mUseAttachedEvents);
   }
 
   return NS_OK;
@@ -775,15 +779,16 @@ void nsWindow::ExposeRegion(LayoutDeviceIntRegion region)
     return;
   }
   ClientLayerManager *clientLayerManager = GetLayerManager()->AsClientLayerManager();
+  nsIWidgetListener* listener = mAttachedWidgetListener ? mAttachedWidgetListener : mWidgetListener;
 
   if (clientLayerManager) {
     // we are in compositor client
     // just commit region to OMTC
     clientLayerManager->SetNeedsComposite(true);
     clientLayerManager->SendInvalidRegion(region.ToUnknownRegion());
-    mWidgetListener->WillPaintWindow(this);
-    mWidgetListener->PaintWindow(this, region);
-    mWidgetListener->DidPaintWindow();
+    listener->WillPaintWindow(this);
+    listener->PaintWindow(this, region);
+    listener->DidPaintWindow();
 
     clientLayerManager->Composite();
     clientLayerManager->SetNeedsComposite(false);
@@ -802,9 +807,9 @@ void nsWindow::ExposeRegion(LayoutDeviceIntRegion region)
     gfxUtils::ClipToRegion(dt, region.ToUnknownRegion());
     RefPtr<gfxContext> ctx = gfxContext::CreatePreservingTransformOrNull(dt);
     AutoLayerManagerSetup setupLayerManager(this, ctx, bm);
-    mWidgetListener->WillPaintWindow(this);
-    mWidgetListener->PaintWindow(this, region);
-    mWidgetListener->DidPaintWindow();
+    listener->WillPaintWindow(this);
+    listener->PaintWindow(this, region);
+    listener->DidPaintWindow();
 
     // all uncomposited child widgets expose events are routed to toplevel,
     // handle it here
@@ -1030,15 +1035,11 @@ bool nsWindow::OnEvent(const SDL_Event *ev)
     event.mTime = ev->motion.timestamp;
 
     // if fake drag enabled, consume motion
-    bool consume = false;
-    // pass child widget events to DragService
-    if (mWidgetListener && !mNativeWindow) {
-      consume = nsDragService::HandleMouseEvent(this, event, ev->motion.x, ev->motion.y);
-    }
+    bool consume = nsDragService::HandleMouseEvent(this, event, ev->motion.x, ev->motion.y);
     if (!consume) {
       DispatchInputEvent(&event);
       // capture mouse if button down when not dragging
-      if (sInputState.mouseDown && mWidgetListener && !mNativeWindow) {
+      if (sInputState.mouseDown && mWidgetListener) {
         SDL_CaptureMouse(SDL_TRUE);
       }
     } else
@@ -1084,10 +1085,8 @@ bool nsWindow::OnEvent(const SDL_Event *ev)
     }
     event.mTime = ev->button.timestamp;
 
-    // pass child widget events to DragService
-    if (mWidgetListener && !mNativeWindow) {
-      nsDragService::HandleMouseEvent(this, event, ev->button.x, ev->button.y);
-    }
+    // pass events to DragService
+    nsDragService::HandleMouseEvent(this, event, ev->button.x, ev->button.y);
     DispatchInputEvent(&event);
 
   } break;
@@ -1113,15 +1112,11 @@ bool nsWindow::OnEvent(const SDL_Event *ev)
   case SDL_DROPTEXT:
   case SDL_DROPBEGIN:
   case SDL_DROPCOMPLETE:
-    // only send drops to child widget
-    if (mWidgetListener && !mNativeWindow) {
-      int x, y;
-      SDL_GetMouseState(&x, &y);
-      // printf("drop %x %s %d %d\n", ev->type, ev->drop.file, x, y);
-      nsDragService::HandleIncoming(
-          this, ev->drop.file, x, y, ev->type == SDL_DROPCOMPLETE,
-          ev->type == SDL_DROPFILE, ev->drop.timestamp);
-    }
+    int x, y;
+    SDL_GetMouseState(&x, &y);
+    nsDragService::HandleIncoming(
+        this, ev->drop.file, x, y, ev->type == SDL_DROPCOMPLETE,
+        ev->type == SDL_DROPFILE, ev->drop.timestamp);
     break;
   }
   return true;
