@@ -170,6 +170,14 @@ nsWindow::Destroy()
   if (win) {
     // prevent drawing while destroying
     MutexAutoLock lock(nsAppShell::gAppShell->mEventsMutex);
+    /** Need to clean our LayerManager up while still alive */
+    if (mLayerManager) {
+        mLayerManager->Destroy();
+    }
+    mLayerManager = nullptr;
+
+    DestroyCompositor();
+    NotifyWindowDestroyed();
     SDL_DestroyWindow(win);
   }
 
