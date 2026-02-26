@@ -11,6 +11,7 @@
 #define nsAppShell_h_
 
 #include "mozilla/Mutex.h"
+#include "mozilla/CondVar.h"
 #include "nsBaseAppShell.h"
 #include "nsWindow.h"
 #include <SDL.h>
@@ -19,6 +20,15 @@
 struct InvalidWindow {
   mozilla::LayoutDeviceIntRegion region;
   nsWindow *window;
+};
+
+struct EventListElement : mozilla::LinkedListElement<EventListElement>
+{
+  SDL_Event mEvent;
+  void PostTo(mozilla::LinkedList<EventListElement>& aQueue)
+  {
+    aQueue.insertBack(this);
+  }
 };
 
 class nsAppShell : public nsBaseAppShell {
@@ -38,6 +48,17 @@ public:
   nsTArray<InvalidWindow> mInvalidWindows;
   nsTArray<nsWindow *> mTopLevelWindows;
 
+  nsCOMPtr<nsIThread> mSDLEventsThread;
+  mozilla::Mutex mNotifyMutex;
+  mozilla::CondVar mNotifyCondVar;
+  mozilla::LinkedList<EventListElement> mQueue;
+  unsigned short mNativeEventCount;
+
+  bool mSeparateEventThread;
+  bool mNotify;
+  bool mTerminated;
+  void NotifyEvent();
+
   static inline int GetForcedFullscreen() {
     return sForcedFullscreen;
   }
@@ -52,9 +73,9 @@ public:
 
 protected:
   static int sForcedFullscreen;
-  bool mTerminated;
 
 private:
+  friend class SDLEventRunnable;
   void HandleSDLEvent(const SDL_Event *ev);
   int PollSDLEvent(SDL_Event *ev);
 };

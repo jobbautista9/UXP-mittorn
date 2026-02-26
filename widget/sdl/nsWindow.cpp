@@ -48,8 +48,16 @@ nsWindow::nsWindow()
 nsWindow::~nsWindow()
 {
   if (mNativeWindow) {
-    MutexAutoLock lock(nsAppShell::gAppShell->mEventsMutex);
-    SDL_DestroyWindow(mNativeWindow);
+    if (nsAppShell::gAppShell->mSeparateEventThread) {
+      SDL_Window *win = mNativeWindow;
+      nsAppShell::gAppShell->mSDLEventsThread->Dispatch(
+        NS_NewRunnableFunction([win]{
+          SDL_DestroyWindow(win);
+        }).take(), NS_DISPATCH_NORMAL);
+    } else {
+      MutexAutoLock lock(nsAppShell::gAppShell->mEventsMutex);
+      SDL_DestroyWindow(mNativeWindow);
+    }
   }
   mNativeWindow = nullptr;
 }
@@ -178,7 +186,14 @@ nsWindow::Destroy()
 
     DestroyCompositor();
     NotifyWindowDestroyed();
-    SDL_DestroyWindow(win);
+    if (nsAppShell::gAppShell->mSeparateEventThread) {
+      nsAppShell::gAppShell->mSDLEventsThread->Dispatch(
+        NS_NewRunnableFunction([win]{
+          SDL_DestroyWindow(win);
+        }).take(), NS_DISPATCH_NORMAL);
+    } else {
+      SDL_DestroyWindow(win);
+    }
   }
 
   nsBaseWidget::Destroy();
