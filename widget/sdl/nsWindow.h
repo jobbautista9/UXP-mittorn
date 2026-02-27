@@ -8,6 +8,7 @@
 
 #include "nsBaseWidget.h"
 #include "nsTArray.h"
+#include "mozilla/TouchEvents.h"
 
 #include <SDL.h>
 
@@ -80,6 +81,8 @@ public:
   GetNativeTextEventDispatcherListener() override;
   void ScreenRotationChanged(int aScreenIndex, uint32_t aRotation);
   LayoutDeviceIntRect GetNaturalBounds() override;
+  uint32_t        GetMaxTouchPoints() const override { return mMaxTouchFingerCount; }
+  virtual void RegisterTouchWindow() override { mHandleTouchEvent = true; }
 
 protected:
   virtual ~nsWindow();
@@ -103,6 +106,9 @@ protected:
   void HandleResize(int aWidth, int aHeight);
   LayoutDeviceIntPoint TransformCoord(int aX, int aY);
   LayoutDeviceIntSize mDrawableSize;
+  nsClassHashtable<nsUint64HashKey, mozilla::SingleTouchData> mTouches;
+  int mMaxTouchFingerCount;
+  bool mHandleTouchEvent;
 };
 
 #endif /* NSWINDOW_H_ */

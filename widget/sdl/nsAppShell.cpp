@@ -39,6 +39,8 @@ static void InitSDL()
   SDL_SetHint(SDL_HINT_MOUSE_AUTO_CAPTURE, "0");
   // allow ui interaction when accepting focus
   SDL_SetHint(SDL_HINT_MOUSE_FOCUS_CLICKTHROUGH, "1");
+  // we always need simulated mouse events
+  SDL_SetHint(SDL_HINT_TOUCH_MOUSE_EVENTS, "1");
 }
 
 class SDLEventRunnable : public mozilla::Runnable{

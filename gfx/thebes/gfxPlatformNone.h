@@ -42,7 +42,11 @@ public:
     }
 
     virtual bool SupportsApzWheelInput() const override {
-      return false;
+      return true;
+    }
+
+    virtual bool SupportsApzTouchInput() const override {
+      return true;
     }
 
     bool RespectsFontStyleSmoothing() const override {

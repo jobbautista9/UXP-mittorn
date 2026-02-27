@@ -42,6 +42,7 @@ nsWindow::nsWindow()
   , mRotation(ROTATION_0)
   , mParent(nullptr)
   , mDrawableSize(0,0)
+  , mHandleTouchEvent(false)
 {
 }
 
@@ -847,9 +848,11 @@ void nsWindow::ExposeRegion(LayoutDeviceIntRegion region)
 bool nsWindow::OnEvent(const SDL_Event *ev)
 {
   static struct {
+    uint32_t lastTouchID;
     bool mouseDown, keyPressRepeat;
     uint8_t keyPressLocation, keyPressIndex;
     mozilla::Modifiers modifiers;
+    bool touchDrag;
   } sInputState;
 
   switch (ev->type) {
@@ -1052,6 +1055,12 @@ bool nsWindow::OnEvent(const SDL_Event *ev)
     // if fake drag enabled, consume motion
     bool consume = nsDragService::HandleMouseEvent(this, event, ev->motion.x, ev->motion.y);
     if (!consume) {
+      if (ev->motion.which == SDL_TOUCH_MOUSEID) {
+        event.inputSource = nsIDOMMouseEvent::MOZ_SOURCE_TOUCH;
+        if (mHandleTouchEvent && mAPZC) {
+          break;
+        }
+      }
       DispatchInputEvent(&event);
       // capture mouse if button down when not dragging
       if (sInputState.mouseDown && mWidgetListener) {
@@ -1098,10 +1107,19 @@ bool nsWindow::OnEvent(const SDL_Event *ev)
       contextMenuEvent.mTime = ev->button.timestamp;
       DispatchInputEvent(&contextMenuEvent);
     }
-    event.mTime = ev->button.timestamp;
 
     // pass events to DragService
     nsDragService::HandleMouseEvent(this, event, ev->button.x, ev->button.y);
+    if (ev->button.which == SDL_TOUCH_MOUSEID) {
+      event.inputSource = nsIDOMMouseEvent::MOZ_SOURCE_TOUCH;
+      if (mHandleTouchEvent && mAPZC) {
+        if (event.mMessage == eMouseDown && event.mClickCount == 2) {
+            // eMouseTouchDrag works only if sent after touch input
+            sInputState.touchDrag = true;
+        }
+        break;
+      }
+    }
     DispatchInputEvent(&event);
 
   } break;
@@ -1126,14 +1144,71 @@ bool nsWindow::OnEvent(const SDL_Event *ev)
   case SDL_DROPFILE:
   case SDL_DROPTEXT:
   case SDL_DROPBEGIN:
-  case SDL_DROPCOMPLETE:
+  case SDL_DROPCOMPLETE: {
     int x, y;
     SDL_GetMouseState(&x, &y);
     nsDragService::HandleIncoming(
         this, ev->drop.file, x, y, ev->type == SDL_DROPCOMPLETE,
         ev->type == SDL_DROPFILE, ev->drop.timestamp);
-    break;
+  } break;
+  case SDL_FINGERMOTION:
+  case SDL_FINGERDOWN:
+  case SDL_FINGERUP: {
+    MultiTouchInput touchInput;
+
+    // start and move use same code path, so check for it first
+    touchInput.mType = ev->type == SDL_FINGERMOTION ? MultiTouchInput::MULTITOUCH_MOVE: MultiTouchInput::MULTITOUCH_START;
+    touchInput.mTime = ev->tfinger.timestamp;
+    touchInput.modifiers = sInputState.modifiers;
+    int32_t id;
+    nsAutoPtr<SingleTouchData> touch;
+
+    // generate IDs with dictionary (same as gtk touch)
+    mTouches.RemoveAndForget((uint64_t)ev->tfinger.fingerId, touch);
+    if (touch) {
+      id = touch->mIdentifier;
+    } else {
+      id = ++sInputState.lastTouchID & 0x7FFFFFFF;
+    }
+    LayoutDeviceIntPoint point = TransformCoord(mDrawableSize.width * ev->tfinger.x, mDrawableSize.height * ev->tfinger.y);
+    touch = new SingleTouchData(id,
+      ViewAs<ScreenPixel>(point, PixelCastJustification::LayoutDeviceIsScreenForUntransformedEvent),
+      ScreenSize(1,1), 0.0f, 1.0f);
+
+    if (ev->type == SDL_FINGERUP) {
+      // on end only send touch, which generated this event
+      touchInput.mType = MultiTouchInput::MULTITOUCH_END;
+      touchInput.mTouches.AppendElement(*touch);
+    } else {
+      // start/move report all touches
+      mTouches.Put((uint64_t)ev->tfinger.fingerId, touch.forget());
+
+      // count detected touches
+      int count = 0;
+      for (auto iter = mTouches.Iter(); !iter.Done(); iter.Next()) {
+        touchInput.mTouches.AppendElement(*iter.UserData());
+        count++;
+      }
+      if (count > mMaxTouchFingerCount) {
+        mMaxTouchFingerCount = count;
+      }
+    }
+    DispatchTouchInput(touchInput);
+
+    // send scheduled eMouseTouchDrag after touch processing
+    if (sInputState.touchDrag) {
+       WidgetMouseEvent dragEvent(true, eMouseTouchDrag, this, WidgetMouseEvent::eReal);
+       dragEvent.mRefPoint = point;
+       dragEvent.mClickCount = 2;
+       dragEvent.mTime = ev->tfinger.timestamp;
+       dragEvent.button = WidgetMouseEvent::eLeftButton;
+       dragEvent.inputSource = nsIDOMMouseEvent::MOZ_SOURCE_TOUCH;
+       DispatchInputEvent(&dragEvent);
+       sInputState.touchDrag = false;
+    }
+  } break;
   }
+
   return true;
 }
 
@@ -1207,6 +1282,11 @@ bool nsWindow::OnGlobalEvent(const SDL_Event *ev)
     winId = ev->editExt.windowID;
     textEditFree = true;
     break;
+  case SDL_FINGERMOTION:
+  case SDL_FINGERDOWN:
+  case SDL_FINGERUP:
+    winId = ev->tfinger.windowID;
+  break;
   }
 
   SDL_Window *win = SDL_GetWindowFromID(winId);
