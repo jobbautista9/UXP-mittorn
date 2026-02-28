@@ -82,11 +82,15 @@ NS_IMETHODIMP SDLThread::Run() {
         break;
       }
       ev->PostTo(nsAppShell::gAppShell->mQueue);
+      (void) ev.release();
+      ev.reset(new EventListElement);
+      while (SDL_PollEvent(&ev->mEvent)) {
+        ev->PostTo(nsAppShell::gAppShell->mQueue);
+        (void) ev.release();
+        ev.reset(new EventListElement);
+      }
       nsAppShell::gAppShell->mNotify = true;
       nsAppShell::gAppShell->mNotifyCondVar.Notify();
-      if(ev->isInList())
-        (void) ev.release();
-      ev.reset(new EventListElement);
     }
   }
   return NS_OK;
@@ -178,30 +182,30 @@ bool nsAppShell::ProcessNextNativeEvent(bool aMayWait) {
   // fast path for LAYERS_BASIC (before waiting event)
   nsWindow::HandleInvalidWindows();
   if (mSeparateEventThread) {
-    // we do not have any platform events. so only wait on CondVar
+    bool ret = false;
+    // we do not have any platform events in this thread. so only wait on CondVar
     mNotifyMutex.Lock();
 
     while (aMayWait && !mNotify) {
       mNotifyCondVar.Wait();
     }
-
-
     mNotify = false;
 
-    while (mNativeEventCount && mNativeEventCount--) {
-      mNotifyMutex.Unlock();
-      NativeEventCallback();
-      mNotifyMutex.Lock();
-    }
-    while (!mQueue.isEmpty()) {
-      mozilla::UniquePtr<EventListElement> ev(mQueue.popFirst());
-      //printf("sdl  pop event %x\n", ev->mEvent.type);
-      mNotifyMutex.Unlock();
-      HandleSDLEvent(&ev->mEvent);
-      mNotifyMutex.Lock();
-    }
+    unsigned short cnt = mNativeEventCount;
+    mNativeEventCount = 0;
+    mozilla::LinkedList<EventListElement> queue = Move(mQueue);
     mNotifyMutex.Unlock();
-    return true;
+
+    while (cnt--) {
+      NativeEventCallback();
+      ret = true;
+    }
+    while (!queue.isEmpty()) {
+      mozilla::UniquePtr<EventListElement> ev(queue.popFirst());
+      HandleSDLEvent(&ev->mEvent);
+      ret = true;
+    }
+    return ret;
   }
 
   int (*evFunc)(SDL_Event *) = aMayWait ? SDL_WaitEvent : SDL_PollEvent;
