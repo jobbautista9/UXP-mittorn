@@ -848,6 +848,7 @@ void nsWindow::ExposeRegion(LayoutDeviceIntRegion region)
 bool nsWindow::OnEvent(const SDL_Event *ev)
 {
   static struct {
+    uint32_t lastMoveTime;
     uint32_t lastTouchID;
     bool mouseDown, keyPressRepeat;
     uint8_t keyPressLocation, keyPressIndex;
@@ -1058,6 +1059,14 @@ bool nsWindow::OnEvent(const SDL_Event *ev)
       if (ev->motion.which == SDL_TOUCH_MOUSEID) {
         event.inputSource = nsIDOMMouseEvent::MOZ_SOURCE_TOUCH;
         if (mHandleTouchEvent && mAPZC) {
+          // pass some motion events to make ui responsible
+          // do not send events to often
+          if (ev->motion.timestamp - sInputState.lastMoveTime > 150) {
+            sInputState.lastMoveTime = ev->motion.timestamp;
+            nsEventStatus status = nsEventStatus_eIgnore;
+            // skip APZ
+            DispatchEvent(&event, status);
+          }
           break;
         }
       }
@@ -1116,6 +1125,15 @@ bool nsWindow::OnEvent(const SDL_Event *ev)
         if (event.mMessage == eMouseDown && event.mClickCount == 2) {
             // eMouseTouchDrag works only if sent after touch input
             sInputState.touchDrag = true;
+        }
+        // simulate motion event to activate element visually
+        if (event.mMessage == eMouseDown && event.mClickCount == 1) {
+          event.mMessage = eMouseMove;
+          event.mClickCount = 0;
+          event.button = 0;
+          nsEventStatus status = nsEventStatus_eIgnore;
+          // bypass APZ
+          DispatchEvent(&event, status);
         }
         break;
       }
