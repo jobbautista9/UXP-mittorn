@@ -24,7 +24,9 @@ struct InvalidWindow {
 
 struct EventListElement : mozilla::LinkedListElement<EventListElement>
 {
-  SDL_Event mEvent;
+  nsWindow *mWindow = nullptr;
+  SDL_Event mEvent = {};
+
   void PostTo(mozilla::LinkedList<EventListElement>& aQueue)
   {
     aQueue.insertBack(this);
@@ -76,7 +78,6 @@ protected:
 
 private:
   friend class SDLEventRunnable;
-  void HandleSDLEvent(const SDL_Event *ev);
   int PollSDLEvent(SDL_Event *ev);
 };
 

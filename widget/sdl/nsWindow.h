@@ -74,7 +74,7 @@ public:
   NS_IMETHOD_(void)
   SetInputContext(const InputContext &aContext, const InputContextAction &aAction) override;
   NS_IMETHOD_(InputContext) GetInputContext() override;
-  static bool OnGlobalEvent(const SDL_Event *ev);
+  static bool PreprocessEvent(SDL_Event *aEv, nsWindow** aWindow);
   static void HandleInvalidWindows();
 
   NS_IMETHODIMP_(TextEventDispatcherListener*)
@@ -83,6 +83,8 @@ public:
   LayoutDeviceIntRect GetNaturalBounds() override;
   uint32_t        GetMaxTouchPoints() const override { return mMaxTouchFingerCount; }
   virtual void RegisterTouchWindow() override { mHandleTouchEvent = true; }
+
+  bool OnEvent(const SDL_Event *ev);
 
 protected:
   virtual ~nsWindow();
@@ -100,7 +102,6 @@ protected:
   RefPtr<TextEventDispatcherListener>mTextEventDispatcherListener;
 
   void OnSizeChanged(const mozilla::gfx::IntSize &aSize);
-  bool OnEvent(const SDL_Event *ev);
   void ExposeRegion(LayoutDeviceIntRegion);
   void ScheduleResize();
   void HandleResize(int aWidth, int aHeight);

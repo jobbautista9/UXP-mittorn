@@ -855,6 +855,8 @@ bool nsWindow::OnEvent(const SDL_Event *ev)
     mozilla::Modifiers modifiers;
     bool touchDrag;
   } sInputState;
+  bool dropFree = false;
+  bool textEditFree = false;
 
   switch (ev->type) {
   case SDL_KEYDOWN:
@@ -1007,6 +1009,11 @@ bool nsWindow::OnEvent(const SDL_Event *ev)
     dispatcher->FlushPendingComposition(status, &eventTime);
   }
   break;
+
+  case SDL_TEXTEDITING_EXT:
+    textEditFree = true;
+    // todo: prcoess this too
+    break;
   case SDL_WINDOWEVENT:
     switch (ev->window.event) {
     case SDL_WINDOWEVENT_EXPOSED:
@@ -1168,6 +1175,8 @@ bool nsWindow::OnEvent(const SDL_Event *ev)
     nsDragService::HandleIncoming(
         this, ev->drop.file, x, y, ev->type == SDL_DROPCOMPLETE,
         ev->type == SDL_DROPFILE, ev->drop.timestamp);
+    if (ev->drop.file)
+      dropFree = true;
   } break;
   case SDL_FINGERMOTION:
   case SDL_FINGERDOWN:
@@ -1227,6 +1236,24 @@ bool nsWindow::OnEvent(const SDL_Event *ev)
   } break;
   }
 
+  // pass child widgets, but not toplevel windows, if any
+  for (uint32_t i = 0; i < mChildren.Length(); ++i) {
+    // pass events to non-toplevel children
+    if (!mChildren[i]->mNativeWindow) {
+      mChildren[i]->OnEvent(ev);
+    }
+  }
+
+  // free SDL  "leaked" data after processing events in child windows
+  if (mNativeWindow) {
+
+    if (dropFree) {
+      SDL_free(ev->drop.file);
+    }
+    if (textEditFree) {
+      SDL_free(ev->editExt.text);
+    }
+  }
   return true;
 }
 
@@ -1259,7 +1286,7 @@ nsWindow::GetLayerManager(PLayerTransactionChild* aShadowManager,
 }
 
 //static
-bool nsWindow::OnGlobalEvent(const SDL_Event *ev)
+bool nsWindow::PreprocessEvent(SDL_Event *ev, nsWindow **aWindow)
 {
   Uint32 winId = 0;
   bool dropFree = false;
@@ -1290,8 +1317,9 @@ bool nsWindow::OnGlobalEvent(const SDL_Event *ev)
   case SDL_DROPBEGIN:
   case SDL_DROPCOMPLETE:
     winId = ev->drop.windowID;
-    if (ev->drop.file)
+    if (ev->drop.file) {
       dropFree = true;
+    }
     break;
   case SDL_TEXTEDITING:
     winId = ev->edit.windowID;
@@ -1312,28 +1340,18 @@ bool nsWindow::OnGlobalEvent(const SDL_Event *ev)
     return false;
   }
 
-  nsWindow *aWindow = (nsWindow *)SDL_GetWindowData(win, "nsWindow");
-  if (!aWindow) {
+  *aWindow = (nsWindow *)SDL_GetWindowData(win, "nsWindow");
+  if (!*aWindow) {
+    if (dropFree) {
+      SDL_free(ev->drop.file);
+    }
+    if (textEditFree) {
+      SDL_free(ev->editExt.text);
+    }
     return false;
   }
 
-  aWindow->OnEvent(ev);
-  for (uint32_t i = 0; i < aWindow->mChildren.Length(); ++i) {
-    // pass events to non-toplevel children
-    if (!aWindow->mChildren[i]->mNativeWindow) {
-      aWindow->mChildren[i]->OnEvent(ev);
-    }
-  }
-
-  // SDL2 doucmented memory "leaks"
-  if (dropFree) {
-    SDL_free(ev->drop.file);
-  }
-  if (textEditFree) {
-    SDL_free(ev->editExt.text);
-  }
-
-  return true;
+  return !!*aWindow;
 }
 
 
