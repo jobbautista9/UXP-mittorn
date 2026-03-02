@@ -848,7 +848,6 @@ void nsWindow::ExposeRegion(LayoutDeviceIntRegion region)
 bool nsWindow::OnEvent(const SDL_Event *ev)
 {
   static struct {
-    uint32_t lastMoveTime;
     uint32_t lastTouchID;
     bool mouseDown, keyPressRepeat;
     uint8_t keyPressLocation, keyPressIndex;
@@ -1063,17 +1062,12 @@ bool nsWindow::OnEvent(const SDL_Event *ev)
     // if fake drag enabled, consume motion
     bool consume = nsDragService::HandleMouseEvent(this, event, ev->motion.x, ev->motion.y);
     if (!consume) {
-      if (ev->motion.which == SDL_TOUCH_MOUSEID) {
+      if (ev->motion.which == SDL_TOUCH_MOUSEID || nsAppShell::gAppShell->mEmulateTouchscreen) {
         event.inputSource = nsIDOMMouseEvent::MOZ_SOURCE_TOUCH;
         if (mHandleTouchEvent && mAPZC) {
-          // pass some motion events to make ui responsible
-          // do not send events to often
-          if (ev->motion.timestamp - sInputState.lastMoveTime > 150) {
-            sInputState.lastMoveTime = ev->motion.timestamp;
-            nsEventStatus status = nsEventStatus_eIgnore;
-            // skip APZ
-            DispatchEvent(&event, status);
-          }
+          nsEventStatus status = nsEventStatus_eIgnore;
+          // bypass APZ
+          DispatchEvent(&event, status);
           break;
         }
       }
@@ -1126,7 +1120,7 @@ bool nsWindow::OnEvent(const SDL_Event *ev)
 
     // pass events to DragService
     nsDragService::HandleMouseEvent(this, event, ev->button.x, ev->button.y);
-    if (ev->button.which == SDL_TOUCH_MOUSEID) {
+    if (ev->button.which == SDL_TOUCH_MOUSEID || nsAppShell::gAppShell->mEmulateTouchscreen) {
       event.inputSource = nsIDOMMouseEvent::MOZ_SOURCE_TOUCH;
       if (mHandleTouchEvent && mAPZC) {
         if (event.mMessage == eMouseDown && event.mClickCount == 2) {
@@ -1288,6 +1282,7 @@ nsWindow::GetLayerManager(PLayerTransactionChild* aShadowManager,
 //static
 bool nsWindow::PreprocessEvent(SDL_Event *ev, nsWindow **aWindow)
 {
+  static uint32_t lastMoveTime;
   Uint32 winId = 0;
   bool dropFree = false;
   bool textEditFree = false;
@@ -1302,8 +1297,26 @@ bool nsWindow::PreprocessEvent(SDL_Event *ev, nsWindow **aWindow)
   case SDL_TEXTINPUT:
     winId = ev->text.windowID;
     break;
-  case SDL_MOUSEMOTION:
+  case SDL_MOUSEMOTION: {
     winId = ev->motion.windowID;
+    SDL_Window *win = SDL_GetWindowFromID(winId);
+    nsWindow *w = (nsWindow *)SDL_GetWindowData(win, "nsWindow");
+    if (!w) {
+      return false;
+    }
+    *aWindow = w;
+    if ((ev->motion.which == SDL_TOUCH_MOUSEID || nsAppShell::gAppShell->mEmulateTouchscreen )
+        && w->mHandleTouchEvent && w->mAPZC) {
+      // pass some motion events to make ui responsible
+      // do not send events to often
+      if (ev->motion.timestamp - lastMoveTime > 150) {
+        lastMoveTime = ev->motion.timestamp;
+        return true;
+      }
+      return false;
+    }
+    return true;
+  }
     break;
   case SDL_MOUSEBUTTONUP:
   case SDL_MOUSEBUTTONDOWN:
