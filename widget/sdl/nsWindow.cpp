@@ -850,6 +850,32 @@ void nsWindow::ExposeRegion(LayoutDeviceIntRegion region)
   }
 }
 
+void
+nsWindow::DispatchEventToAPZOnly(mozilla::WidgetInputEvent* aEvent)
+{
+  //MOZ_ASSERT(NS_IsMainThread());
+
+  /*if (nsAppShell::gAppShell->mSeparateEventThread) {
+    //RefPtr<IAPZCTreeManager> controller = mAPZC;
+    if (mAPZC && aEvent->mMessage == eDragEnd) {
+      WidgetMouseEvent& mouseEvent = *aEvent->AsMouseEvent();
+      MouseInput input(mouseEvent);
+      input.mOrigin = ScreenPoint(mouseEvent.mRefPoint.x, mouseEvent.mRefPoint.y);
+      nsAppShell::gAppShell->mSDLEventsThread->Dispatch(
+      NS_NewRunnableFunction([input, this]{
+          MOZ_ASSERT(APZThreadUtils::IsControllerThread());
+          uint64_t inputBlockId = 0;
+          ScrollableLayerGuid guid;
+          InputData i = input;
+          mAPZC->ReceiveInputEvent(i, &guid, &inputBlockId);
+        }).take(), NS_DISPATCH_NORMAL);
+    }
+  } else {*/
+  if (!nsAppShell::gAppShell->mSeparateEventThread) {
+    nsBaseWidget::DispatchEventToAPZOnly(aEvent);
+  }
+}
+
 
 void
 nsWindow::ConfigureAPZControllerThread()
@@ -1277,7 +1303,7 @@ bool nsWindow::PreprocessEvent(SDL_Event *ev, nsWindow **aWindow)
         && w->mHandleTouchEvent && w->mAPZC) {
       // pass some motion events to make ui responsible
       // do not send events to often
-      if (ev->motion.timestamp - lastMoveTime > 150 && w->mTouches.Count() == 1) {
+      if ((ev->motion.timestamp - lastMoveTime > 150 || sDragWindow) && w->mTouches.Count() == 1) {
         lastMoveTime = ev->motion.timestamp;
         return true;
       }

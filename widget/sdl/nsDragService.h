@@ -34,7 +34,7 @@ public:
   NS_IMETHOD GetNumDropItems(uint32_t * aNumItems);
   NS_IMETHOD IsDataFlavorSupported(const char *aDataFlavor, bool *_retval);
   bool IsDragging() { return mDoingDrag; }
-  static bool HandleMouseEvent(nsIWidget *aWidget, const mozilla::WidgetMouseEvent &event, int aX, int aY);
+  static bool HandleMouseEvent(nsIWidget *aWidget, const mozilla::WidgetInputEvent &event, int aX, int aY);
   static void HandleIncoming(nsIWidget *aWidget, const char *aData, int aX, int aY, bool aDone, bool aFile, unsigned int aTime);
   private:
   nsTArray<DragItem> mDragItems;

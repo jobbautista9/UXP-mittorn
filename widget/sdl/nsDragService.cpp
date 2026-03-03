@@ -72,7 +72,7 @@ nsresult nsDragService::InvokeDragSessionImpl(nsIArray *anArrayTransferables,
  */
 // static
 bool nsDragService::HandleMouseEvent(nsIWidget *aWidget,
-                                     const WidgetMouseEvent &aEvent, int aX,
+                                     const WidgetInputEvent &aEvent, int aX,
                                      int aY)
 {
   nsDragService *service = gInstance;
@@ -97,6 +97,14 @@ bool nsDragService::HandleMouseEvent(nsIWidget *aWidget,
   event.inputSource = service->GetInputSource();
   event.mRefPoint = aEvent.mRefPoint;
 
+  if (aEvent.IsControl() && aEvent.IsShift()) {
+    service->SetDragAction(nsIDragService::DRAGDROP_ACTION_LINK);
+  } else if (aEvent.IsControl()) {
+    service->SetDragAction(nsIDragService::DRAGDROP_ACTION_COPY);
+  } else {
+    service->SetDragAction(nsIDragService::DRAGDROP_ACTION_MOVE);
+  }
+
   event.mTime = aEvent.mTime;
   if (aEvent.mMessage == eMouseMove) {
     if (lastWidget != aWidget) {
@@ -114,8 +122,9 @@ bool nsDragService::HandleMouseEvent(nsIWidget *aWidget,
     service->FireDragEventAtSource(eDrag);
     event.mMessage = eDragOver;
     aWidget->SetCursor(eCursor_grabbing);
-  } else if (aEvent.mMessage != eMouseUp)
+  } else if (aEvent.mMessage != eMouseUp) {
     return true;
+  }
 
   service->DragMoved(aX, aY);
   aWidget->DispatchEvent(&event, status);
@@ -125,6 +134,7 @@ bool nsDragService::HandleMouseEvent(nsIWidget *aWidget,
 
   printf("End drag session\n");
   service->SetDragEndPoint(nsIntPoint(aX, aY));
+  service->SetDragAction(nsIDragService::DRAGDROP_ACTION_NONE);
   service->EndDragSession(true);
   service->mDoingDrag = false;
   lastWidget = nullptr;

@@ -86,6 +86,8 @@ public:
   LayoutDeviceIntRect GetNaturalBounds() override;
   uint32_t        GetMaxTouchPoints() const override { return mMaxTouchFingerCount; }
   virtual void RegisterTouchWindow() override { mHandleTouchEvent = true; }
+  void DispatchEventToAPZOnly(mozilla::WidgetInputEvent* aEvent) override;
+
 
   bool OnEvent(const SDL_Event *ev);
 
