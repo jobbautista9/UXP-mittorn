@@ -8,15 +8,15 @@
 #include "nsScreenManager.h"
 #include "nsWindow.h"
 #include "mozilla/Preferences.h"
+#include "base/message_loop.h"
+#include "nsThread.h"
 
 nsAppShell *nsAppShell::gAppShell = NULL;
 int nsAppShell::sForcedFullscreen = -1;
 
 // SDL helpers
 
-// user sdl events (wakeup thread, running SDL_WaitEvent
-#define APPSHELL_SDL_NOTIFY_NATICE_CB 1
-#define APPSHELL_SDL_NOTIFY_UI 2
+
 
 static void NotifySDLThread(int code) {
   SDL_Event user_event;
@@ -41,16 +41,22 @@ static void InitSDL()
   SDL_SetHint(SDL_HINT_MOUSE_FOCUS_CLICKTHROUGH, "1");
   // we always need simulated mouse events
   SDL_SetHint(SDL_HINT_TOUCH_MOUSE_EVENTS, "1");
+  if (nsAppShell::gAppShell->mEmulateTouchscreen) {
+    SDL_SetHint(SDL_HINT_MOUSE_TOUCH_EVENTS, "1");
+  }
 }
 
-class SDLEventRunnable : public mozilla::Runnable{
-public:
-  SDL_Event mEvent;
-  SDLEventRunnable(const SDL_Event &aEv)
-    : mEvent(aEv) {}
-  NS_DECL_NSIRUNNABLE
-};
 
+static void HandleScreenEvents(const SDL_Event *aEv) {
+  if (MOZ_UNLIKELY(aEv->type == SDL_DISPLAYEVENT)) {
+    nsCOMPtr<nsIScreenManager> manager =
+      do_GetService("@mozilla.org/gfx/screenmanager;1");
+    nsScreenManager *screenManager =
+      (nsScreenManager *)(nsIScreenManager *)manager;
+    screenManager->UpdateScreens();
+  }
+}
+static volatile bool sThreadShutdown;
 class SDLThread : public mozilla::Runnable{
   public:
     NS_DECL_NSIRUNNABLE
@@ -71,12 +77,20 @@ NS_IMETHODIMP SDLThread::Run() {
 
   mozilla::UniquePtr<EventListElement> ev;
   ev.reset(new EventListElement);
+  nsAppShell::gAppShell->mSDLEventsLoop = MessageLoop::current();
   nsAppShell::gAppShell->NotifyEvent();
   while(true) {
-    bool ret;
-    nsAppShell::gAppShell->mSDLEventsThread->ProcessNextEvent(false, &ret);
     SDL_WaitEvent(&ev->mEvent);
-    {
+
+    bool ret = true;
+    while(ret) {
+      nsAppShell::gAppShell->mSDLEventsThread->ProcessNextEvent(false, &ret);
+    }
+    if(sThreadShutdown)
+      break;
+
+    HandleScreenEvents(&ev->mEvent);
+    if (nsWindow::PreprocessEvent(&ev->mEvent, &ev->mWindow)) {
       mozilla::MutexAutoLock lock(nsAppShell::gAppShell->mNotifyMutex);
       if (nsAppShell::gAppShell->mTerminated) {
         break;
@@ -84,14 +98,20 @@ NS_IMETHODIMP SDLThread::Run() {
       ev->PostTo(nsAppShell::gAppShell->mQueue);
       (void) ev.release();
       ev.reset(new EventListElement);
-      while (SDL_PollEvent(&ev->mEvent)) {
+    }
+    while (SDL_PollEvent(&ev->mEvent)) {
+      HandleScreenEvents(&ev->mEvent);
+      if (nsWindow::PreprocessEvent(&ev->mEvent, &ev->mWindow)) {
+        mozilla::MutexAutoLock lock(nsAppShell::gAppShell->mNotifyMutex);
+        if (nsAppShell::gAppShell->mTerminated) {
+          break;
+        }
         ev->PostTo(nsAppShell::gAppShell->mQueue);
         (void) ev.release();
         ev.reset(new EventListElement);
       }
-      nsAppShell::gAppShell->mNotify = true;
-      nsAppShell::gAppShell->mNotifyCondVar.Notify();
     }
+    nsAppShell::gAppShell->NotifyEvent();
   }
   return NS_OK;
 }
@@ -99,11 +119,6 @@ NS_IMETHODIMP SDLThread::Run() {
 NS_IMETHODIMP
 nsAppShell::ResumeNative(void) {
   return nsBaseAppShell::ResumeNative();
-}
-
-NS_IMETHODIMP SDLEventRunnable::Run() {
-  nsAppShell::gAppShell->HandleSDLEvent(&mEvent);
-  return NS_OK;
 }
 
 nsAppShell::nsAppShell()
@@ -117,6 +132,30 @@ nsAppShell::nsAppShell()
 }
 
 nsAppShell::~nsAppShell() { gAppShell = NULL; }
+
+/* wrapper to wake thread with NotifySDLThread */
+class SDLEventsThread: public nsThread {
+  bool mShutdown;
+public:
+  SDLEventsThread() : nsThread(nsThread::NOT_MAIN_THREAD, nsIThreadManager::DEFAULT_STACK_SIZE) {
+    nsCOMPtr<nsIRunnable> runnable(new SDLThread());
+    Init();
+    nsThread::Dispatch(runnable, NS_DISPATCH_NORMAL);
+  }
+  NS_IMETHODIMP
+  Dispatch(already_AddRefed<nsIRunnable> aRunnable, uint32_t aFlags) override {
+
+    nsCOMPtr<nsIRunnable> runnable(aRunnable);
+    nsresult ret = nsThread::Dispatch(runnable.forget(), aFlags);
+    NotifySDLThread(APPSHELL_SDL_NOTIFY_UI);
+    return ret;
+  }
+  NS_IMETHODIMP Shutdown() override {
+    sThreadShutdown = true;
+    NotifySDLThread(APPSHELL_SDL_NOTIFY_UI);
+    return nsThread::Shutdown();
+  }
+};
 
 // Init
 //
@@ -133,10 +172,13 @@ nsresult nsAppShell::Init() {
   if (env) {
     mSeparateEventThread = atoi(env);
   }
+  env = PR_GetEnv("MOZ_SDL_EMULATE_TOUCHSCREEN");
+  if (env) {
+    mEmulateTouchscreen = atoi(env);
+  }
   if (mSeparateEventThread) {
     mozilla::MutexAutoLock lock(mNotifyMutex);
-    nsCOMPtr<nsIRunnable> sdlThread = new SDLThread();
-    NS_NewThread(getter_AddRefs(mSDLEventsThread), sdlThread);
+    mSDLEventsThread = new SDLEventsThread();
 
     while (!mNotify) {
       mNotifyCondVar.Wait();
@@ -150,19 +192,6 @@ nsresult nsAppShell::Init() {
   return nsBaseAppShell::Init();
 }
 
-void nsAppShell::HandleSDLEvent(const SDL_Event *ev) {
-  if (ev->type == SDL_USEREVENT && ev->user.code == APPSHELL_SDL_NOTIFY_NATICE_CB) {
-    NativeEventCallback();
-  }
-  if (MOZ_UNLIKELY(ev->type == SDL_DISPLAYEVENT)) {
-    nsCOMPtr<nsIScreenManager> manager =
-        do_GetService("@mozilla.org/gfx/screenmanager;1");
-    nsScreenManager *screenManager =
-        (nsScreenManager *)(nsIScreenManager *)manager;
-    screenManager->UpdateScreens();
-  }
-  nsWindow::OnGlobalEvent(ev);
-}
 
 int nsAppShell::PollSDLEvent(SDL_Event *ev) {
   mEventsMutex.Lock();
@@ -202,7 +231,14 @@ bool nsAppShell::ProcessNextNativeEvent(bool aMayWait) {
     }
     while (!queue.isEmpty()) {
       mozilla::UniquePtr<EventListElement> ev(queue.popFirst());
-      HandleSDLEvent(&ev->mEvent);
+      if (ev->mWindow) {
+        ev->mWindow->OnEvent(&ev->mEvent);
+      }
+      else if (ev->mEvent.type == SDL_USEREVENT && ev->mEvent.user.code == APPSHELL_SDL_RUNNABLE_CB) {
+        nsIRunnable *runnable = (nsIRunnable*)ev->mEvent.user.data1;
+        runnable->Run();
+        runnable->Release();
+      }
       ret = true;
     }
     return ret;
@@ -220,7 +256,15 @@ bool nsAppShell::ProcessNextNativeEvent(bool aMayWait) {
   }
 
   do {
-    HandleSDLEvent(&ev);
+    HandleScreenEvents(&ev);
+    if (ev.type == SDL_USEREVENT && ev.user.code == APPSHELL_SDL_NOTIFY_NATICE_CB) {
+      NativeEventCallback();
+    } else {
+      nsWindow *win = nullptr;
+      if (nsWindow::PreprocessEvent(&ev, &win) && win) {
+        win->OnEvent(&ev);
+      }
+    }
   } while (PollSDLEvent(&ev));
   // handle invalidated during SDL_WINDOWEVENT_EXPOSE
   nsWindow::HandleInvalidWindows();
@@ -234,9 +278,7 @@ nsAppShell::Exit(void) {
   }
 
   mTerminated = true;
-  if (mSeparateEventThread) {
-    NotifySDLThread(APPSHELL_SDL_NOTIFY_UI);
-  }
+
   return nsBaseAppShell::Exit();
 }
 

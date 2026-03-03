@@ -74,6 +74,9 @@ public:
   NS_IMETHOD_(void)
   SetInputContext(const InputContext &aContext, const InputContextAction &aAction) override;
   NS_IMETHOD_(InputContext) GetInputContext() override;
+  void ConfigureAPZControllerThread() override;
+  nsEventStatus DispatchInputEvent(mozilla::WidgetInputEvent* aEvent) override;
+
   static bool PreprocessEvent(SDL_Event *aEv, nsWindow** aWindow);
   static void HandleInvalidWindows();
 

@@ -16,6 +16,12 @@
 #include "nsWindow.h"
 #include <SDL.h>
 
+// user sdl events (wakeup thread, running SDL_WaitEvent
+#define APPSHELL_SDL_NOTIFY_NATICE_CB 1
+#define APPSHELL_SDL_NOTIFY_UI 2
+#define APPSHELL_SDL_RUNNABLE_CB 3
+
+
 // global window invalidation list
 struct InvalidWindow {
   mozilla::LayoutDeviceIntRegion region;
@@ -51,18 +57,42 @@ public:
   nsTArray<nsWindow *> mTopLevelWindows;
 
   nsCOMPtr<nsIThread> mSDLEventsThread;
+  MessageLoop* mSDLEventsLoop;
   mozilla::Mutex mNotifyMutex;
   mozilla::CondVar mNotifyCondVar;
   mozilla::LinkedList<EventListElement> mQueue;
   unsigned short mNativeEventCount;
 
   bool mSeparateEventThread;
+  bool mEmulateTouchscreen;
   bool mNotify;
   bool mTerminated;
   void NotifyEvent();
 
   static inline int GetForcedFullscreen() {
     return sForcedFullscreen;
+  }
+
+  // post to main thread in events order or just call function
+  template <typename func>
+  static inline bool PostToMainThread(SDL_Event *ev, func&& aCb) {
+    if (gAppShell->mSeparateEventThread) {
+      ev->type = SDL_USEREVENT;
+      ev->user.code = APPSHELL_SDL_RUNNABLE_CB;
+      mozilla::Runnable *r = new mozilla::detail::RunnableFunction
+        // Make sure we store a non-reference in nsRunnableFunction.
+        <typename mozilla::RemoveReference<func>::Type>
+        // But still forward aFunction to move if possible.
+        (mozilla::Forward<func>(aCb));
+      r->AddRef();
+      ev->user.data1 = r;
+
+     // ev->user.data1 = NS_NewRunnableFunction(cb);
+    } else {
+      aCb();
+    }
+
+    return true;
   }
 
 protected:

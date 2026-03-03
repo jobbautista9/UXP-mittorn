@@ -18,6 +18,7 @@
 #include "nsSDLKeymap.h"
 #include "nsSDLCursors.h"
 #include "mozilla/MouseEvents.h"
+#include "mozilla/TouchEvents.h"
 #include "mozilla/TextEventDispatcher.h"
 #include "mozilla/Preferences.h"
 
@@ -26,6 +27,10 @@
 #include "nsDragService.h"
 #include "BasicLayers.h"
 #include "nsIScreenManager.h"
+#include "mozilla/layers/APZEventState.h"
+#include "mozilla/layers/APZThreadUtils.h"
+#include "mozilla/layers/IAPZCTreeManager.h"
+
 using namespace mozilla;
 using namespace mozilla::dom;
 using namespace mozilla::layers;
@@ -845,14 +850,32 @@ void nsWindow::ExposeRegion(LayoutDeviceIntRegion region)
   }
 }
 
+
+void
+nsWindow::ConfigureAPZControllerThread()
+{
+  if (nsAppShell::gAppShell->mSeparateEventThread) {
+    APZThreadUtils::SetControllerThread(nsAppShell::gAppShell->mSDLEventsLoop);
+  } else {
+    nsBaseWidget::ConfigureAPZControllerThread();
+  }
+}
+
+nsEventStatus nsWindow::DispatchInputEvent(WidgetInputEvent* aEvent) {
+  if (nsAppShell::gAppShell->mSeparateEventThread) {
+    nsEventStatus ret;
+    DispatchEvent(aEvent, ret);
+    return ret;
+  }
+  return nsBaseWidget::DispatchInputEvent(aEvent);
+}
+
 bool nsWindow::OnEvent(const SDL_Event *ev)
 {
   static struct {
-    uint32_t lastTouchID;
     bool mouseDown, keyPressRepeat;
     uint8_t keyPressLocation, keyPressIndex;
     mozilla::Modifiers modifiers;
-    bool touchDrag;
   } sInputState;
   bool dropFree = false;
   bool textEditFree = false;
@@ -1108,6 +1131,8 @@ bool nsWindow::OnEvent(const SDL_Event *ev)
       event.button = WidgetMouseEvent::eMiddleButton;
       break;
     }
+    bool touch = ev->button.which == SDL_TOUCH_MOUSEID || nsAppShell::gAppShell->mEmulateTouchscreen;
+    bool apz = mHandleTouchEvent && mAPZC;
 
     // right menu click on linux should also pop up a context menu
     if (event.button == WidgetMouseEvent::eRightButton) {
@@ -1120,13 +1145,9 @@ bool nsWindow::OnEvent(const SDL_Event *ev)
 
     // pass events to DragService
     nsDragService::HandleMouseEvent(this, event, ev->button.x, ev->button.y);
-    if (ev->button.which == SDL_TOUCH_MOUSEID || nsAppShell::gAppShell->mEmulateTouchscreen) {
+    if (touch) {
       event.inputSource = nsIDOMMouseEvent::MOZ_SOURCE_TOUCH;
-      if (mHandleTouchEvent && mAPZC) {
-        if (event.mMessage == eMouseDown && event.mClickCount == 2) {
-            // eMouseTouchDrag works only if sent after touch input
-            sInputState.touchDrag = true;
-        }
+      if (apz) {
         // simulate motion event to activate element visually
         if (event.mMessage == eMouseDown && event.mClickCount == 1) {
           event.mMessage = eMouseMove;
@@ -1171,62 +1192,6 @@ bool nsWindow::OnEvent(const SDL_Event *ev)
         ev->type == SDL_DROPFILE, ev->drop.timestamp);
     if (ev->drop.file)
       dropFree = true;
-  } break;
-  case SDL_FINGERMOTION:
-  case SDL_FINGERDOWN:
-  case SDL_FINGERUP: {
-    MultiTouchInput touchInput;
-
-    // start and move use same code path, so check for it first
-    touchInput.mType = ev->type == SDL_FINGERMOTION ? MultiTouchInput::MULTITOUCH_MOVE: MultiTouchInput::MULTITOUCH_START;
-    touchInput.mTime = ev->tfinger.timestamp;
-    touchInput.modifiers = sInputState.modifiers;
-    int32_t id;
-    nsAutoPtr<SingleTouchData> touch;
-
-    // generate IDs with dictionary (same as gtk touch)
-    mTouches.RemoveAndForget((uint64_t)ev->tfinger.fingerId, touch);
-    if (touch) {
-      id = touch->mIdentifier;
-    } else {
-      id = ++sInputState.lastTouchID & 0x7FFFFFFF;
-    }
-    LayoutDeviceIntPoint point = TransformCoord(mDrawableSize.width * ev->tfinger.x, mDrawableSize.height * ev->tfinger.y);
-    touch = new SingleTouchData(id,
-      ViewAs<ScreenPixel>(point, PixelCastJustification::LayoutDeviceIsScreenForUntransformedEvent),
-      ScreenSize(1,1), 0.0f, 1.0f);
-
-    if (ev->type == SDL_FINGERUP) {
-      // on end only send touch, which generated this event
-      touchInput.mType = MultiTouchInput::MULTITOUCH_END;
-      touchInput.mTouches.AppendElement(*touch);
-    } else {
-      // start/move report all touches
-      mTouches.Put((uint64_t)ev->tfinger.fingerId, touch.forget());
-
-      // count detected touches
-      int count = 0;
-      for (auto iter = mTouches.Iter(); !iter.Done(); iter.Next()) {
-        touchInput.mTouches.AppendElement(*iter.UserData());
-        count++;
-      }
-      if (count > mMaxTouchFingerCount) {
-        mMaxTouchFingerCount = count;
-      }
-    }
-    DispatchTouchInput(touchInput);
-
-    // send scheduled eMouseTouchDrag after touch processing
-    if (sInputState.touchDrag) {
-       WidgetMouseEvent dragEvent(true, eMouseTouchDrag, this, WidgetMouseEvent::eReal);
-       dragEvent.mRefPoint = point;
-       dragEvent.mClickCount = 2;
-       dragEvent.mTime = ev->tfinger.timestamp;
-       dragEvent.button = WidgetMouseEvent::eLeftButton;
-       dragEvent.inputSource = nsIDOMMouseEvent::MOZ_SOURCE_TOUCH;
-       DispatchInputEvent(&dragEvent);
-       sInputState.touchDrag = false;
-    }
   } break;
   }
 
@@ -1283,9 +1248,12 @@ nsWindow::GetLayerManager(PLayerTransactionChild* aShadowManager,
 bool nsWindow::PreprocessEvent(SDL_Event *ev, nsWindow **aWindow)
 {
   static uint32_t lastMoveTime;
+  static uint32_t lastTouchID;
+  static bool touchDrag;
   Uint32 winId = 0;
   bool dropFree = false;
   bool textEditFree = false;
+  *aWindow = nullptr;
   switch (ev->type) {
   case SDL_KEYDOWN:
   case SDL_KEYUP:
@@ -1309,7 +1277,7 @@ bool nsWindow::PreprocessEvent(SDL_Event *ev, nsWindow **aWindow)
         && w->mHandleTouchEvent && w->mAPZC) {
       // pass some motion events to make ui responsible
       // do not send events to often
-      if (ev->motion.timestamp - lastMoveTime > 150) {
+      if (ev->motion.timestamp - lastMoveTime > 150 && w->mTouches.Count() == 1) {
         lastMoveTime = ev->motion.timestamp;
         return true;
       }
@@ -1318,8 +1286,23 @@ bool nsWindow::PreprocessEvent(SDL_Event *ev, nsWindow **aWindow)
     return true;
   }
     break;
+  case SDL_MOUSEBUTTONDOWN: {
+    winId = ev->button.windowID;
+    SDL_Window *win = SDL_GetWindowFromID(winId);
+    nsWindow *w = (nsWindow *)SDL_GetWindowData(win, "nsWindow");
+    if (!w) {
+      return false;
+    }
+    *aWindow = w;
+    if ((ev->button.which == SDL_TOUCH_MOUSEID || nsAppShell::gAppShell->mEmulateTouchscreen)
+        && w->mHandleTouchEvent && w->mAPZC && ev->button.clicks == 2) {
+      // eMouseTouchDrag works only if sent after touch input
+      touchDrag = true;
+    }
+    return true;
+    break;
+  }
   case SDL_MOUSEBUTTONUP:
-  case SDL_MOUSEBUTTONDOWN:
     winId = ev->button.windowID;
     break;
   case SDL_MOUSEWHEEL:
@@ -1343,8 +1326,89 @@ bool nsWindow::PreprocessEvent(SDL_Event *ev, nsWindow **aWindow)
     break;
   case SDL_FINGERMOTION:
   case SDL_FINGERDOWN:
-  case SDL_FINGERUP:
+  case SDL_FINGERUP: {
     winId = ev->tfinger.windowID;
+    SDL_Window *win = SDL_GetWindowFromID(winId);
+    nsWindow *w = (nsWindow *)SDL_GetWindowData(win, "nsWindow");
+    if (!w) {
+      return false;
+    }
+    MultiTouchInput touchInput;
+
+    // start and move use same code path, so check for it first
+    touchInput.mType = ev->type == SDL_FINGERMOTION ? MultiTouchInput::MULTITOUCH_MOVE: MultiTouchInput::MULTITOUCH_START;
+    touchInput.mTime = ev->tfinger.timestamp;
+    int32_t id;
+    nsAutoPtr<SingleTouchData> touch;
+
+    // generate IDs with dictionary (same as gtk touch)
+    w->mTouches.RemoveAndForget((uint64_t)ev->tfinger.fingerId, touch);
+    if (touch) {
+      id = touch->mIdentifier;
+    } else {
+      id = ++lastTouchID & 0x7FFFFFFF;
+    }
+    LayoutDeviceIntPoint point = w->TransformCoord(w->mDrawableSize.width * ev->tfinger.x, w->mDrawableSize.height * ev->tfinger.y);
+    touch = new SingleTouchData(id,
+                                ViewAs<ScreenPixel>(point, PixelCastJustification::LayoutDeviceIsScreenForUntransformedEvent),
+                                ScreenSize(1,1), 0.0f, 1.0f);
+
+    if (ev->type == SDL_FINGERUP) {
+      // on end only send touch, which generated this event
+      touchInput.mType = MultiTouchInput::MULTITOUCH_END;
+      touchInput.mTouches.AppendElement(*touch);
+    } else {
+      // start/move report all touches
+      w->mTouches.Put((uint64_t)ev->tfinger.fingerId, touch.forget());
+
+      // count detected touches
+      int count = 0;
+      for (auto iter = w->mTouches.Iter(); !iter.Done(); iter.Next()) {
+        touchInput.mTouches.AppendElement(*iter.UserData());
+        count++;
+      }
+      if (count > w->mMaxTouchFingerCount) {
+        w->mMaxTouchFingerCount = count;
+      }
+    }
+    ScrollableLayerGuid guid;
+    uint64_t blockId;
+    nsEventStatus status = w->mAPZC->ReceiveInputEvent(touchInput, &guid, &blockId);
+    if (status == nsEventStatus_eConsumeNoDefault) {
+      return false;
+    }
+    uint32_t time = ev->tfinger.timestamp;
+    bool lTouchDrag = touchDrag;
+    touchDrag = false;
+    return nsAppShell::PostToMainThread(ev,[touchInput, w, guid, blockId, status, lTouchDrag]() {
+
+      WidgetTouchEvent touchEvent = touchInput.ToWidgetTouchEvent(w);
+      w->ProcessUntransformedAPZEvent(&touchEvent, guid, blockId, status);
+      if (touchEvent.mMessage == eTouchStart && touchEvent.mTouches.Length() == 1) {
+        WidgetMouseEvent event(true, mozilla::eMouseHitTest, w, WidgetMouseEvent::eReal);
+        event.mRefPoint = touchEvent.mTouches[0]->mRefPoint;
+        event.mIgnoreRootScrollFrame = true;
+        event.inputSource = nsIDOMMouseEvent::MOZ_SOURCE_TOUCH;
+        event.mTime = touchInput.mTime;
+        nsEventStatus status;
+        w->DispatchEvent(&event, status);
+
+        if (w->mAPZEventState && event.hitCluster) {
+          w->mAPZEventState->ProcessClusterHit();
+        }
+        if (lTouchDrag) {
+          event.hitCluster = false;
+          event.mIgnoreRootScrollFrame = false;
+          event.mMessage = mozilla::eMouseTouchDrag;
+          event.mClickCount = 2;
+          event.button= WidgetMouseEvent::eLeftButton;
+          w->DispatchEvent(&event, status);
+        }
+      }
+
+    });
+
+  }
   break;
   }
 
