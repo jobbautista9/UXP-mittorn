@@ -628,8 +628,9 @@ void* nsWindow::GetNativeData(uint32_t aDataType)
   return retVal;
 }
 LayoutDeviceIntPoint nsWindow::TransformCoord(int x, int y) {
-  const LayoutDeviceIntSize &bounds = mNativeWindow? mDrawableSize : mParent->mDrawableSize;
-  ScreenRotation rot = (ScreenRotation)(mNativeWindow? mRotation: mParent->mRotation);
+  const nsWindow *fallback = mParent? mParent: this;
+  const LayoutDeviceIntSize &bounds = mNativeWindow? mDrawableSize : fallback->mDrawableSize;
+  ScreenRotation rot = (ScreenRotation)(mNativeWindow? mRotation: fallback->mRotation);
   switch(rot) {
      case mozilla::ROTATION_0:
         return {nscoord(x), nscoord(y)};
@@ -1399,14 +1400,16 @@ bool nsWindow::PreprocessEvent(SDL_Event *ev, nsWindow **aWindow)
     }
     ScrollableLayerGuid guid;
     uint64_t blockId;
-    nsEventStatus status = w->mAPZC->ReceiveInputEvent(touchInput, &guid, &blockId);
+    nsEventStatus status = nsEventStatus_eIgnore;
+    if (w->mAPZC) {
+      status = w->mAPZC->ReceiveInputEvent(touchInput, &guid, &blockId);
+    }
     if (status == nsEventStatus_eConsumeNoDefault) {
       return false;
     }
     uint32_t time = ev->tfinger.timestamp;
-    bool lTouchDrag = touchDrag;
     touchDrag = false;
-    return nsAppShell::PostToMainThread(ev,[touchInput, w, guid, blockId, status, lTouchDrag]() {
+    return nsAppShell::PostToMainThread(ev,[touchInput, w, guid, blockId, status]() {
 
       WidgetTouchEvent touchEvent = touchInput.ToWidgetTouchEvent(w);
       w->ProcessUntransformedAPZEvent(&touchEvent, guid, blockId, status);
@@ -1422,13 +1425,14 @@ bool nsWindow::PreprocessEvent(SDL_Event *ev, nsWindow **aWindow)
         if (w->mAPZEventState && event.hitCluster) {
           w->mAPZEventState->ProcessClusterHit();
         }
-        if (lTouchDrag) {
+        if (touchDrag) {
           event.hitCluster = false;
           event.mIgnoreRootScrollFrame = false;
           event.mMessage = mozilla::eMouseTouchDrag;
           event.mClickCount = 2;
           event.button= WidgetMouseEvent::eLeftButton;
           w->DispatchEvent(&event, status);
+          touchDrag = false;
         }
       }
 
