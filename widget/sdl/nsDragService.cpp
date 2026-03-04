@@ -86,12 +86,6 @@ bool nsDragService::HandleMouseEvent(nsIWidget *aWidget,
     return false;
   }
 
-  if (!changed) {
-    // hack: reset sdl mouse grab to allow dragging between windows
-    SDL_CaptureMouse(SDL_TRUE);
-    SDL_CaptureMouse(SDL_FALSE);
-  }
-
   WidgetDragEvent event(true, eDrop, aWidget);
   nsEventStatus status;
   event.inputSource = service->GetInputSource();

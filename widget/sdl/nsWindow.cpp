@@ -854,24 +854,6 @@ void nsWindow::ExposeRegion(LayoutDeviceIntRegion region)
 void
 nsWindow::DispatchEventToAPZOnly(mozilla::WidgetInputEvent* aEvent)
 {
-  //MOZ_ASSERT(NS_IsMainThread());
-
-  /*if (nsAppShell::gAppShell->mSeparateEventThread) {
-    //RefPtr<IAPZCTreeManager> controller = mAPZC;
-    if (mAPZC && aEvent->mMessage == eDragEnd) {
-      WidgetMouseEvent& mouseEvent = *aEvent->AsMouseEvent();
-      MouseInput input(mouseEvent);
-      input.mOrigin = ScreenPoint(mouseEvent.mRefPoint.x, mouseEvent.mRefPoint.y);
-      nsAppShell::gAppShell->mSDLEventsThread->Dispatch(
-      NS_NewRunnableFunction([input, this]{
-          MOZ_ASSERT(APZThreadUtils::IsControllerThread());
-          uint64_t inputBlockId = 0;
-          ScrollableLayerGuid guid;
-          InputData i = input;
-          mAPZC->ReceiveInputEvent(i, &guid, &inputBlockId);
-        }).take(), NS_DISPATCH_NORMAL);
-    }
-  } else {*/
   if (!nsAppShell::gAppShell->mSeparateEventThread) {
     nsBaseWidget::DispatchEventToAPZOnly(aEvent);
   }
@@ -1101,112 +1083,6 @@ bool nsWindow::OnEvent(const SDL_Event *ev)
     }
 
     break;
-  case SDL_MOUSEMOTION: {
-    WidgetMouseEvent event(true, eMouseMove, this, WidgetMouseEvent::eReal,
-                           WidgetMouseEvent::eNormal);
-
-    event.mRefPoint = TransformCoord(ev->motion.x, ev->motion.y);
-    event.mModifiers = sInputState.modifiers;
-    event.mTime = ev->motion.timestamp;
-
-    // if fake drag enabled, consume motion
-    bool consume = nsDragService::HandleMouseEvent(this, event, ev->motion.x, ev->motion.y);
-    if (!consume) {
-      if (ev->motion.which == SDL_TOUCH_MOUSEID || nsAppShell::gAppShell->mEmulateTouchscreen) {
-        event.inputSource = nsIDOMMouseEvent::MOZ_SOURCE_TOUCH;
-        if (mHandleTouchEvent && mAPZC) {
-          nsEventStatus status = nsEventStatus_eIgnore;
-          // bypass APZ
-          DispatchEvent(&event, status);
-          break;
-        }
-      }
-      DispatchInputEvent(&event);
-      // capture mouse if button down when not dragging
-      if (sInputState.mouseDown && mWidgetListener) {
-        SDL_CaptureMouse(SDL_TRUE);
-      }
-    } else
-      sDragWindow = this;
-  } break;
-  case SDL_MOUSEBUTTONUP:
-  case SDL_MOUSEBUTTONDOWN: {
-    if (ev->button.button == SDL_BUTTON_LEFT) {
-      sInputState.mouseDown = ev->type == SDL_MOUSEBUTTONDOWN;
-    }
-
-    // reset capture, set in SDL_MOUSEMOTION
-    SDL_CaptureMouse(SDL_FALSE);
-    sDragWindow = nullptr;
-
-    WidgetMouseEvent event(
-        true, ev->type == SDL_MOUSEBUTTONUP ? eMouseUp : eMouseDown, this,
-        WidgetMouseEvent::eReal);
-    event.mRefPoint = TransformCoord(ev->button.x, ev->button.y);
-    event.mClickCount = ev->button.clicks;
-    event.mModifiers = sInputState.modifiers;
-    event.mTime = ev->button.timestamp;
-
-    switch (ev->button.button) {
-    case SDL_BUTTON_RIGHT:
-      event.button = WidgetMouseEvent::eRightButton;
-      break;
-    case SDL_BUTTON_LEFT:
-      event.button = WidgetMouseEvent::eLeftButton;
-      break;
-    case SDL_BUTTON_MIDDLE:
-      event.button = WidgetMouseEvent::eMiddleButton;
-      break;
-    }
-    bool touch = ev->button.which == SDL_TOUCH_MOUSEID || nsAppShell::gAppShell->mEmulateTouchscreen;
-    bool apz = mHandleTouchEvent && mAPZC;
-
-    // right menu click on linux should also pop up a context menu
-    if (event.button == WidgetMouseEvent::eRightButton) {
-      WidgetMouseEvent contextMenuEvent(true, eContextMenu, this, WidgetMouseEvent::eReal);
-      contextMenuEvent.mRefPoint = TransformCoord(ev->button.x, ev->button.y);
-      contextMenuEvent.mClickCount = ev->button.clicks;
-      contextMenuEvent.mTime = ev->button.timestamp;
-      DispatchInputEvent(&contextMenuEvent);
-    }
-
-    // pass events to DragService
-    nsDragService::HandleMouseEvent(this, event, ev->button.x, ev->button.y);
-    if (touch) {
-      event.inputSource = nsIDOMMouseEvent::MOZ_SOURCE_TOUCH;
-      if (apz) {
-        // simulate motion event to activate element visually
-        if (event.mMessage == eMouseDown && event.mClickCount == 1) {
-          event.mMessage = eMouseMove;
-          event.mClickCount = 0;
-          event.button = 0;
-          nsEventStatus status = nsEventStatus_eIgnore;
-          // bypass APZ
-          DispatchEvent(&event, status);
-        }
-        break;
-      }
-    }
-    DispatchInputEvent(&event);
-
-  } break;
-  case SDL_MOUSEWHEEL: {
-    WidgetWheelEvent wheelEvent(true, eWheel, this);
-
-    wheelEvent.mDeltaMode = nsIDOMWheelEvent::DOM_DELTA_LINE;
-    wheelEvent.mDeltaX = wheelEvent.mLineOrPageDeltaX = ev->wheel.x;
-    // scroll by 3 lines
-    wheelEvent.mDeltaY = wheelEvent.mLineOrPageDeltaY = ev->wheel.y * -3;
-
-    int posX, posY;
-    SDL_GetMouseState(&posX, &posY);
-
-    wheelEvent.mRefPoint = TransformCoord(posX, posY);
-    wheelEvent.mModifiers = sInputState.modifiers;
-    wheelEvent.mTime = ev->wheel.timestamp;
-
-    DispatchInputEvent(&wheelEvent);
-  } break;
     // SDL only receives text and file drags
   case SDL_DROPFILE:
   case SDL_DROPTEXT:
@@ -1271,12 +1147,36 @@ nsWindow::GetLayerManager(PLayerTransactionChild* aShadowManager,
   return mLayerManager;
 }
 
+static ScreenIntPoint ToScreen(const LayoutDeviceIntPoint aPoint) {
+  return ViewAs<ScreenPixel>(aPoint, PixelCastJustification::LayoutDeviceIsScreenForUntransformedEvent);
+}
+
+nsEventStatus nsWindow::ProcessUntransformedAPZEvent(
+                             WidgetInputEvent* aEvent,
+                             const ScrollableLayerGuid& aGuid,
+                             uint64_t aInputBlockId,
+                             nsEventStatus aApzResponse) {
+  // ProcessUntransformedAPZEvent will fail without compositor session
+  if (!mAPZC || !mCompositorSession || !aEvent->mFlags.mHandledByAPZ) {
+    nsEventStatus status;
+    DispatchEvent(aEvent, status);
+    return status;
+  }
+  return nsBaseWidget::ProcessUntransformedAPZEvent(aEvent, aGuid, aInputBlockId, aApzResponse);
+}
+
 //static
 bool nsWindow::PreprocessEvent(SDL_Event *ev, nsWindow **aWindow)
 {
   static uint32_t lastMoveTime;
   static uint32_t lastTouchID;
+  static uint16_t buttons;
+  static mozilla::Modifiers modifiers;
   static bool touchDrag;
+  ScrollableLayerGuid guid;
+  uint64_t blockId;
+  nsEventStatus status = nsEventStatus_eIgnore;
+
   Uint32 winId = 0;
   bool dropFree = false;
   bool textEditFree = false;
@@ -1285,6 +1185,7 @@ bool nsWindow::PreprocessEvent(SDL_Event *ev, nsWindow **aWindow)
   case SDL_KEYDOWN:
   case SDL_KEYUP:
     winId = ev->key.windowID;
+    modifiers = ConvertModifiers(ev->key.keysym.mod);
     break;
   case SDL_WINDOWEVENT:
     winId = ev->window.windowID;
@@ -1299,20 +1200,47 @@ bool nsWindow::PreprocessEvent(SDL_Event *ev, nsWindow **aWindow)
     if (!w) {
       return false;
     }
-    *aWindow = w;
-    if ((ev->motion.which == SDL_TOUCH_MOUSEID || nsAppShell::gAppShell->mEmulateTouchscreen )
-        && w->mHandleTouchEvent && w->mAPZC) {
-      // pass some motion events to make ui responsible
-      // do not send events to often
-      if ((ev->motion.timestamp - lastMoveTime > 150 || sDragWindow) && w->mTouches.Count() == 1) {
-        lastMoveTime = ev->motion.timestamp;
-        return true;
-      }
+    bool touch = ev->motion.which == SDL_TOUCH_MOUSEID || nsAppShell::gAppShell->mEmulateTouchscreen;
+    MouseInput input(MouseInput::MOUSE_MOVE, MouseInput::NONE,
+                     touch?nsIDOMMouseEvent::MOZ_SOURCE_TOUCH:nsIDOMMouseEvent::MOZ_SOURCE_MOUSE,
+                     buttons, ToScreen(w->TransformCoord(ev->motion.x, ev->motion.y)),
+                     ev->motion.timestamp, TimeStamp::Now(), modifiers);
+    // skip APZ for touch-generated events, it conflicts with touch APZ
+    if(!touch&& w->mAPZC) {
+      status = w->mAPZC->ReceiveInputEvent(input, &guid, &blockId);
+
+    }
+    if (status == nsEventStatus_eConsumeNoDefault) {
       return false;
     }
-    return true;
+    if (touch && w->mHandleTouchEvent && w->mAPZC) {
+      // pass some motion events to make ui responsible
+      // do not send events to often
+      input.mInputSource = nsIDOMMouseEvent::MOZ_SOURCE_TOUCH;
+      if ((ev->motion.timestamp - lastMoveTime > 150 || sDragWindow) && w->mTouches.Count() == 1) {
+        lastMoveTime = ev->motion.timestamp;
+      } else {
+        return false;
+      }
+    }
+    // capture mouse when moving with clicked button and no drag session
+    // if drag session active, mouse should not be captured to allow receive events from other windows (cross window drag)
+    if (buttons & WidgetMouseEventBase::eLeftButtonFlag) {
+      SDL_CaptureMouse(sDragWindow? SDL_FALSE: SDL_TRUE);
+    }
+    return nsAppShell::PostToMainThread(ev,[input, w, guid, blockId, status] {
+      WidgetMouseEvent event = input.ToWidgetMouseEvent(w);
+      bool consume = nsDragService::HandleMouseEvent(w, event, input.mOrigin.x, input.mOrigin.y);
+      if (!consume) {
+        w->ProcessUntransformedAPZEvent(&event, guid, blockId, status);
+      }
+      else {
+        sDragWindow = w;
+      }
+    });;;
   }
     break;
+  case SDL_MOUSEBUTTONUP:
   case SDL_MOUSEBUTTONDOWN: {
     winId = ev->button.windowID;
     SDL_Window *win = SDL_GetWindowFromID(winId);
@@ -1320,21 +1248,111 @@ bool nsWindow::PreprocessEvent(SDL_Event *ev, nsWindow **aWindow)
     if (!w) {
       return false;
     }
-    *aWindow = w;
-    if ((ev->button.which == SDL_TOUCH_MOUSEID || nsAppShell::gAppShell->mEmulateTouchscreen)
-        && w->mHandleTouchEvent && w->mAPZC && ev->button.clicks == 2) {
+    MouseInput::ButtonType btype = MouseInput::NONE;
+    switch (ev->button.button) {
+      case SDL_BUTTON_RIGHT:
+        btype = MouseInput::RIGHT_BUTTON;
+        break;
+      case SDL_BUTTON_LEFT:
+        btype = MouseInput::LEFT_BUTTON;
+        break;
+      case SDL_BUTTON_MIDDLE:
+        btype = MouseInput::MIDDLE_BUTTON;
+        break;
+    }
+    if (btype !=  MouseInput::NONE) {
+      if (ev->type == SDL_MOUSEBUTTONUP) {
+        buttons &= ~(1 << btype);
+      } else {
+        buttons |= 1 << btype;
+      }
+    }
+
+    bool touch = ev->button.which == SDL_TOUCH_MOUSEID || nsAppShell::gAppShell->mEmulateTouchscreen;
+    bool apz = w->mHandleTouchEvent && w->mAPZC;
+
+    MouseInput input(
+      ev->type == SDL_MOUSEBUTTONDOWN?MouseInput::MOUSE_DOWN: MouseInput::MOUSE_UP,
+      btype, touch?nsIDOMMouseEvent::MOZ_SOURCE_TOUCH:nsIDOMMouseEvent::MOZ_SOURCE_MOUSE, buttons,
+      ToScreen(w->TransformCoord(ev->button.x, ev->button.y)),
+      ev->button.timestamp, TimeStamp::Now(), modifiers);
+    int clicks = ev->button.clicks;
+    if (ev->type == SDL_MOUSEBUTTONDOWN && apz && clicks == 2) {
       // eMouseTouchDrag works only if sent after touch input
       touchDrag = true;
     }
-    return true;
+
+    // skip APZ for touch-generated events, it conflicts with touch APZ
+    if (!touch && w->mAPZC) {
+      status = w->mAPZC->ReceiveInputEvent(input, &guid, &blockId);
+    }
+
+    if (status == nsEventStatus_eConsumeNoDefault) {
+      return false;
+    }
+
+    // reset mouse capture on any button event
+    SDL_CaptureMouse(SDL_FALSE);
+    sDragWindow = nullptr;
+    return nsAppShell::PostToMainThread(ev,[input, w, guid, blockId, status, apz, touch, clicks] {
+      WidgetMouseEvent event = input.ToWidgetMouseEvent(w);
+      event.mClickCount = clicks;
+
+      // right menu click on linux should also pop up a context menu
+      if (event.button == WidgetMouseEvent::eRightButton) {
+        WidgetMouseEvent contextMenuEvent(true, eContextMenu, w, WidgetMouseEvent::eReal);
+        contextMenuEvent.mRefPoint = event.mRefPoint;
+        contextMenuEvent.mClickCount = event.mClickCount;
+        contextMenuEvent.mTime = event.mTime;
+        w->DispatchInputEvent(&contextMenuEvent);
+      }
+      nsDragService::HandleMouseEvent(w, event, input.mOrigin.x, input.mOrigin.y);
+      if (touch && apz && event.mMessage == eMouseDown && event.mClickCount == 1) {
+        event.mMessage = eMouseMove;
+        event.mClickCount = 0;
+        event.button = 0;
+        nsEventStatus status = nsEventStatus_eIgnore;
+        // bypass APZ
+        w->DispatchEvent(&event, status);
+      }
+      if (!touch) {
+        w->ProcessUntransformedAPZEvent(&event, guid, blockId, status);
+      }
+
+    });
     break;
   }
-  case SDL_MOUSEBUTTONUP:
-    winId = ev->button.windowID;
-    break;
-  case SDL_MOUSEWHEEL:
+  case SDL_MOUSEWHEEL: {
     winId = ev->wheel.windowID;
+    SDL_Window *win = SDL_GetWindowFromID(winId);
+    nsWindow *w = (nsWindow *)SDL_GetWindowData(win, "nsWindow");
+    if (!w) {
+      return false;
+    }
+    int posX, posY;
+    SDL_GetMouseState(&posX, &posY);
+
+    ScrollWheelInput input(ev->wheel.timestamp, TimeStamp::Now(), modifiers,
+                           ScrollWheelInput::SCROLLMODE_SMOOTH,
+                           ScrollWheelInput::SCROLLDELTA_LINE,
+                           ToScreen(w->TransformCoord(posX, posY)),
+                           ev->wheel.x, ev->wheel.y * -3,
+                           false);
+    input.mLineOrPageDeltaX = ev->wheel.x;
+    input.mLineOrPageDeltaY = ev->wheel.y * -3;
+    // WheelPrefs action modifiers ignored when event is handled, so only process APZ with zero modifiers
+    if (w->mAPZC && !modifiers) {
+      status = w->mAPZC->ReceiveInputEvent(input, &guid, &blockId);
+    }
+    if (status == nsEventStatus_eConsumeNoDefault) {
+      return false;
+    }
+    return nsAppShell::PostToMainThread(ev,[input, w, guid, blockId, status]() {
+      WidgetWheelEvent event = input.ToWidgetWheelEvent(w);
+      w->ProcessUntransformedAPZEvent(&event, guid, blockId, status);
+    });
     break;
+  }
   case SDL_DROPFILE:
   case SDL_DROPTEXT:
   case SDL_DROPBEGIN:
@@ -1365,6 +1383,7 @@ bool nsWindow::PreprocessEvent(SDL_Event *ev, nsWindow **aWindow)
     // start and move use same code path, so check for it first
     touchInput.mType = ev->type == SDL_FINGERMOTION ? MultiTouchInput::MULTITOUCH_MOVE: MultiTouchInput::MULTITOUCH_START;
     touchInput.mTime = ev->tfinger.timestamp;
+    touchInput.modifiers = modifiers;
     int32_t id;
     nsAutoPtr<SingleTouchData> touch;
 
@@ -1376,9 +1395,7 @@ bool nsWindow::PreprocessEvent(SDL_Event *ev, nsWindow **aWindow)
       id = ++lastTouchID & 0x7FFFFFFF;
     }
     LayoutDeviceIntPoint point = w->TransformCoord(w->mDrawableSize.width * ev->tfinger.x, w->mDrawableSize.height * ev->tfinger.y);
-    touch = new SingleTouchData(id,
-                                ViewAs<ScreenPixel>(point, PixelCastJustification::LayoutDeviceIsScreenForUntransformedEvent),
-                                ScreenSize(1,1), 0.0f, 1.0f);
+    touch = new SingleTouchData(id, ToScreen(point), ScreenSize(1,1), 0.0f, 1.0f);
 
     if (ev->type == SDL_FINGERUP) {
       // on end only send touch, which generated this event
@@ -1398,9 +1415,6 @@ bool nsWindow::PreprocessEvent(SDL_Event *ev, nsWindow **aWindow)
         w->mMaxTouchFingerCount = count;
       }
     }
-    ScrollableLayerGuid guid;
-    uint64_t blockId;
-    nsEventStatus status = nsEventStatus_eIgnore;
     if (w->mAPZC) {
       status = w->mAPZC->ReceiveInputEvent(touchInput, &guid, &blockId);
     }
@@ -1408,9 +1422,7 @@ bool nsWindow::PreprocessEvent(SDL_Event *ev, nsWindow **aWindow)
       return false;
     }
     uint32_t time = ev->tfinger.timestamp;
-    touchDrag = false;
     return nsAppShell::PostToMainThread(ev,[touchInput, w, guid, blockId, status]() {
-
       WidgetTouchEvent touchEvent = touchInput.ToWidgetTouchEvent(w);
       w->ProcessUntransformedAPZEvent(&touchEvent, guid, blockId, status);
       if (touchEvent.mMessage == eTouchStart && touchEvent.mTouches.Length() == 1) {
