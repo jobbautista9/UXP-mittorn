@@ -157,11 +157,11 @@ nsWindow::Create(nsIWidget* aParent,
             break;
           case SDL_SYSWM_WAYLAND:
 #ifdef SDL_VIDEO_DRIVER_WAYLAND
-            if (wmInfo.info.wayland.display) {
+            if (wmInfo.info.wl.display) {
               nsAppShell::gAppShell->mNativePlatform = 0x31D8; //  EGL_PLATFORM_WAYLAND_EXT
-              nsAppShell::gAppShell->mPlatformDisplay = wmInfo.info.wayland.display;
+              nsAppShell::gAppShell->mPlatformDisplay = wmInfo.info.wl.display;
             }
-            mPlatformWindow = (void*)wmInfo.info.wayland.egl_window;
+            mPlatformWindow = (void*)wmInfo.info.wl.egl_window;
 #endif
           case SDL_SYSWM_KMSDRM:
 #ifdef SDL_VIDEO_DRIVER_KMSDRM
