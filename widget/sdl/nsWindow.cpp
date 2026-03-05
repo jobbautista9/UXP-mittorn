@@ -1333,7 +1333,7 @@ bool nsWindow::PreprocessEvent(SDL_Event *ev, nsWindow **aWindow)
         // bypass APZ
         w->DispatchEvent(&event, status);
       }
-      if (!touch) {
+      if (!touch || !apz) {
         w->ProcessUntransformedAPZEvent(&event, guid, blockId, status);
       }
 
