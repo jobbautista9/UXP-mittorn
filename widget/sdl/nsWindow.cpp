@@ -896,6 +896,10 @@ bool nsWindow::OnEvent(const SDL_Event *ev)
     event.mTime = ev->key.timestamp;
     uint sym = ev->key.keysym.sym;
     int keyIndex = MapKey(sym);
+    // some keys not detcted
+    if (keyIndex == ArrayLength(nsKeycodes) - 1) {
+      keyIndex = MapKey(SDL_SCANCODE_TO_KEYCODE(ev->key.keysym.scancode));
+    }
     const nsKeyConverter &key = nsKeycodes[keyIndex];
     uint keyCode = key.vkCode;
     event.mKeyCode = keyCode;
@@ -906,6 +910,8 @@ bool nsWindow::OnEvent(const SDL_Event *ev)
     // handle printable syms
     if (sym <= 0x7f) {
       HandleCharSyms(event, key, sym);
+    } else if(event.mCodeNameIndex == mozilla::CODE_NAME_INDEX_NumpadEnter) {
+      event.SetCharCode('\r');
     } else if (!(sInputState.modifiers & MODIFIER_NUMLOCK)) {
       HandleNumpad(event, sym);
     }
@@ -918,16 +924,18 @@ bool nsWindow::OnEvent(const SDL_Event *ev)
     if (ev->type == SDL_KEYDOWN) {
         // commit any pending composition
         // without this libeditor blows up
-        nsEventStatus status;
+        nsEventStatus status = nsEventStatus_eIgnore;
         RefPtr<TextEventDispatcher> dispatcher = GetTextEventDispatcher();
         nsresult rv = dispatcher->BeginNativeInputTransaction();
-        dispatcher->DispatchKeyboardEvent(eKeyDown, event, status);
+        if (!dispatcher->DispatchKeyboardEvent(eKeyDown, event, status) || status != nsEventStatus_eConsumeNoDefault) {
+          DispatchInputEvent(&event);
+        }
         if (dispatcher->IsComposing()) {
           dispatcher->CommitComposition(status, nullptr, &event);
         }
+    } else {
+      DispatchInputEvent(&event);
     }
-
-    DispatchInputEvent(&event);
 
     // prepare keyPress event
     if (ev->type == SDL_KEYDOWN) {
@@ -946,9 +954,8 @@ bool nsWindow::OnEvent(const SDL_Event *ev)
       if (sInputState.modifiers & (MODIFIER_ALT | MODIFIER_CONTROL | MODIFIER_META | MODIFIER_OS) && event.mIsChar) {
         event.SetCharCode(ev->key.keysym.sym);
       }
-
       // forward to textinput handler
-      if (event.mKeyNameIndex == KEY_NAME_INDEX_USE_STRING &&  !event.mCharCode) {
+      if (event.mKeyNameIndex == KEY_NAME_INDEX_USE_STRING && !event.mCharCode) {
         sInputState.keyPressIndex = keyIndex;
         sInputState.keyPressLocation = event.mLocation;
         sInputState.keyPressRepeat = event.mIsRepeat;
