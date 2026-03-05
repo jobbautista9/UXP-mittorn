@@ -615,9 +615,21 @@ void* nsWindow::GetNativeData(uint32_t aDataType)
     return nsAppShell::gAppShell->mPlatformDisplay;
   case NS_NATIVE_WIDGET:
     // Use SDL_Window as widget to handle parent widgets
-    return mNativeWindow;
+    if (mNativeWindow) {
+      return mNativeWindow;
+    }
+    if (mParent) {
+      return mParent->GetNativeData(aDataType);
+    }
+    return nullptr;
   case NS_NATIVE_WINDOW:
-    return mPlatformWindow;
+    if (mPlatformWindow) {
+      return mPlatformWindow;
+    }
+    if (mParent) {
+      return mParent->GetNativeData(aDataType);
+    }
+    return nullptr;
   case NS_RAW_NATIVE_IME_CONTEXT:
     return NS_ONLY_ONE_NATIVE_IME_CONTEXT;
   case NS_NATIVE_EGL_PLATFORM:
