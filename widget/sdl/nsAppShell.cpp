@@ -44,16 +44,14 @@ static void InitSDL()
   if (nsAppShell::gAppShell->mEmulateTouchscreen) {
     SDL_SetHint(SDL_HINT_MOUSE_TOUCH_EVENTS, "1");
   }
+
+  nsAppShell::gAppShell->mScreenManager->UpdateScreens();
 }
 
 
 static void HandleScreenEvents(const SDL_Event *aEv) {
   if (MOZ_UNLIKELY(aEv->type == SDL_DISPLAYEVENT)) {
-    nsCOMPtr<nsIScreenManager> manager =
-      do_GetService("@mozilla.org/gfx/screenmanager;1");
-    nsScreenManager *screenManager =
-      (nsScreenManager *)(nsIScreenManager *)manager;
-    screenManager->UpdateScreens();
+    nsAppShell::gAppShell->mScreenManager->UpdateScreens();
   }
 }
 static volatile bool sThreadShutdown;
@@ -126,9 +124,12 @@ nsAppShell::nsAppShell()
   , mNotifyMutex("AppShell.NotifyMutex")
   , mNotifyCondVar(mNotifyMutex, "AppShell.NotifyCondVar")
   , mNativeEventCount(0)
+  , mSeparateEventThread(false)
+  , mEmulateTouchscreen(false)
   , mNotify(false)
   , mTerminated(false) {
   gAppShell = this;
+
 }
 
 nsAppShell::~nsAppShell() { gAppShell = NULL; }
@@ -161,7 +162,6 @@ public:
 //
 // public
 nsresult nsAppShell::Init() {
-
   const char *env = PR_GetEnv("MOZ_SDL_FORCE_FULLSCREEN");
   if (env) {
     sForcedFullscreen = atoi(env);
@@ -176,6 +176,13 @@ nsresult nsAppShell::Init() {
   if (env) {
     mEmulateTouchscreen = atoi(env);
   }
+
+  return nsBaseAppShell::Init();
+}
+
+NS_IMETHODIMP nsAppShell::Run() {
+  nsCOMPtr<nsIScreenManager> ptr = do_GetService("@mozilla.org/gfx/screenmanager;1");
+  mScreenManager = (nsScreenManager*)(nsIScreenManager *)ptr;
   if (mSeparateEventThread) {
     mozilla::MutexAutoLock lock(mNotifyMutex);
     mSDLEventsThread = new SDLEventsThread();
@@ -187,10 +194,12 @@ nsresult nsAppShell::Init() {
     mNotify = false;
   } else {
     InitSDL();
+    // some events might be missed before SDL_Init, reschedule
+    NotifySDLThread(APPSHELL_SDL_NOTIFY_NATICE_CB);
   }
-
-  return nsBaseAppShell::Init();
+  return nsBaseAppShell::Run();
 }
+
 
 
 int nsAppShell::PollSDLEvent(SDL_Event *ev) {
@@ -305,7 +314,10 @@ void nsAppShell::ScheduleNativeEventCallback() {
     return;
   }
   // generate SDL_Event to wake up thread
-  NotifySDLThread(APPSHELL_SDL_NOTIFY_NATICE_CB);
+  // if mScreenManager is null, SDL_Init was not called
+  if (mScreenManager) {
+    NotifySDLThread(APPSHELL_SDL_NOTIFY_NATICE_CB);
+  }
 }
 
 // Used by IPC code

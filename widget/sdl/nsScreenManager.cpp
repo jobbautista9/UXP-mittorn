@@ -71,17 +71,17 @@ nsSDLScreen::GetContentsScaleFactor(double *aContentsScaleFactor)
 }
 
 NS_IMPL_ISUPPORTS(nsScreenManager, nsIScreenManager)
+NS_IMPL_ISUPPORTS(nsSDLScreen, nsIScreen)
 
 nsScreenManager::nsScreenManager()
+ : mUpdateMutex("nsScreenManager.UpdateMutex")
 {
-  SDL_Init(SDL_INIT_VIDEO);
-  EnsureInit();
 }
 
 NS_IMETHODIMP
 nsScreenManager::GetPrimaryScreen(nsIScreen **outScreen)
 {
-  EnsureInit();
+  mozilla::MutexAutoLock lock(mUpdateMutex);
 
   // detect which screen is pointed by mouse
   if (mPrimary < 0 || mPrimary >= mNumScreens) {
@@ -98,7 +98,7 @@ nsScreenManager::GetPrimaryScreen(nsIScreen **outScreen)
 NS_IMETHODIMP
 nsScreenManager::ScreenForRect(int32_t inLeft, int32_t inTop, int32_t inWidth, int32_t inHeight, nsIScreen **outScreen)
 {
-  EnsureInit();
+  mozilla::MutexAutoLock lock(mUpdateMutex);
 
   SDL_Rect rect = {inLeft, inTop, inWidth, inHeight};
   int index = SDL_GetRectDisplayIndex(&rect);
@@ -109,22 +109,15 @@ nsScreenManager::ScreenForRect(int32_t inLeft, int32_t inTop, int32_t inWidth, i
 NS_IMETHODIMP
 nsScreenManager::ScreenForId(uint32_t id, nsIScreen **outScreen)
 {
-  EnsureInit();
-
+  mozilla::MutexAutoLock lock(mUpdateMutex);
   NS_IF_ADDREF(*outScreen = mCachedScreenArray[id]);
 
   return NS_OK;
 }
 
-nsresult nsScreenManager::EnsureInit()
+void nsScreenManager::UpdateScreens()
 {
-  if (!mNumScreens)
-    return UpdateScreens();
-  return NS_OK;
-}
-
-nsresult nsScreenManager::UpdateScreens()
-{
+  mozilla::MutexAutoLock lock(mUpdateMutex);
   int numDisplays = SDL_GetNumVideoDisplays();
   int oldCount = mCachedScreenArray.Count();
   for (int i = 0; i < numDisplays; i++) {
@@ -132,7 +125,8 @@ nsresult nsScreenManager::UpdateScreens()
     if (oldCount <= i) {
       screen = new nsSDLScreen();
       if (!screen || !mCachedScreenArray.AppendObject(screen)) {
-        return NS_ERROR_OUT_OF_MEMORY;
+        mNumScreens = i;
+        return;
       }
     } else {
       screen = (nsSDLScreen *)mCachedScreenArray[i];
@@ -167,19 +161,21 @@ nsresult nsScreenManager::UpdateScreens()
       nsWindow *nsWin = (nsWindow *)nsAppShell::gAppShell->mTopLevelWindows[j];
       SDL_Window *win = (SDL_Window *)nsWin->GetNativeData(NS_NATIVE_WIDGET);
       if (win && SDL_GetWindowDisplayIndex(win) == i) {
-        nsWin->ScreenRotationChanged(i, screen->mRotation);
+        int rotation = screen->mRotation;
+        NS_DispatchToMainThread(NS_NewRunnableFunction([nsWin, i, rotation]{
+          nsWin->ScreenRotationChanged(i, rotation);
+        }));
       }
     }
   }
   mNumScreens = numDisplays;
-  return NS_OK;
 }
 
 NS_IMETHODIMP
 nsScreenManager::ScreenForNativeWidget(void *aWidget, nsIScreen **outScreen)
 {
+  mozilla::MutexAutoLock lock(mUpdateMutex);
   SDL_Window *win = nullptr;
-  EnsureInit();
 
   // for some reason, native window, not widget passed, so find the widget
   for (int i = 0; i < nsAppShell::gAppShell->mTopLevelWindows.Length(); i++) {
@@ -200,7 +196,7 @@ nsScreenManager::ScreenForNativeWidget(void *aWidget, nsIScreen **outScreen)
 NS_IMETHODIMP
 nsScreenManager::GetNumberOfScreens(uint32_t *aNumberOfScreens)
 {
-  EnsureInit();
+  mozilla::MutexAutoLock lock(mUpdateMutex);
   *aNumberOfScreens = mNumScreens;
   return NS_OK;
 }

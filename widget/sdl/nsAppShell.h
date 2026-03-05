@@ -13,6 +13,7 @@
 #include "mozilla/Mutex.h"
 #include "mozilla/CondVar.h"
 #include "nsBaseAppShell.h"
+#include "nsScreenManager.h"
 #include "nsWindow.h"
 #include <SDL.h>
 
@@ -41,13 +42,14 @@ struct EventListElement : mozilla::LinkedListElement<EventListElement>
 
 class nsAppShell : public nsBaseAppShell {
 public:
-  NS_IMETHOD ResumeNative(void);
+  NS_IMETHOD ResumeNative(void) override;
 
   nsAppShell();
 
   nsresult Init();
 
-  NS_IMETHOD Exit(void);
+  NS_IMETHOD Exit(void) override;
+  NS_IMETHOD Run(void) override;
 
   static nsAppShell *gAppShell;
   // resize events may destroy SDL surface, so lock this during
@@ -61,6 +63,7 @@ public:
   mozilla::Mutex mNotifyMutex;
   mozilla::CondVar mNotifyCondVar;
   mozilla::LinkedList<EventListElement> mQueue;
+  RefPtr<nsScreenManager> mScreenManager;
   unsigned short mNativeEventCount;
 
   bool mSeparateEventThread;
