@@ -64,6 +64,8 @@ public:
   mozilla::CondVar mNotifyCondVar;
   mozilla::LinkedList<EventListElement> mQueue;
   RefPtr<nsScreenManager> mScreenManager;
+  void *mPlatformDisplay;
+  uint mNativePlatform;
   unsigned short mNativeEventCount;
 
   bool mSeparateEventThread;
@@ -71,6 +73,7 @@ public:
   bool mNotify;
   bool mTerminated;
   void NotifyEvent();
+  void EnsureInit();
 
   static inline int GetForcedFullscreen() {
     return sForcedFullscreen;
@@ -78,17 +81,17 @@ public:
 
   // post to main thread in events order or just call function
   template <typename func>
-  static inline bool PostToMainThread(SDL_Event *ev, func&& aCb) {
+  static inline bool PostToMainThread(SDL_Event *aEv, func&& aCb) {
     if (gAppShell->mSeparateEventThread) {
-      ev->type = SDL_USEREVENT;
-      ev->user.code = APPSHELL_SDL_RUNNABLE_CB;
+      aEv->type = SDL_USEREVENT;
+      aEv->user.code = APPSHELL_SDL_RUNNABLE_CB;
       mozilla::Runnable *r = new mozilla::detail::RunnableFunction
         // Make sure we store a non-reference in nsRunnableFunction.
         <typename mozilla::RemoveReference<func>::Type>
         // But still forward aFunction to move if possible.
         (mozilla::Forward<func>(aCb));
       r->AddRef();
-      ev->user.data1 = r;
+      aEv->user.data1 = r;
 
      // ev->user.data1 = NS_NewRunnableFunction(cb);
     } else {
@@ -96,6 +99,21 @@ public:
     }
 
     return true;
+  }
+
+  // dispatch to sdl thread (lighter SyncRunnable)
+  template <typename func>
+  static inline void DispatchToSDLThread(func&& aCb, bool aWait = true) {
+    if (gAppShell->mSeparateEventThread) {
+      nsresult rv = gAppShell->mSDLEventsThread->Dispatch(new mozilla::detail::RunnableFunction
+                                            // Make sure we store a non-reference in nsRunnableFunction.
+                                            <typename mozilla::RemoveReference<func>::Type>
+                                            // But still forward aFunction to move if possible.
+                                            (mozilla::Forward<func>(aCb)), aWait?NS_DISPATCH_SYNC:NS_DISPATCH_NORMAL);
+      MOZ_ASSERT(!NS_FAILED(rv));
+    } else {
+      aCb();
+    }
   }
 
 protected:

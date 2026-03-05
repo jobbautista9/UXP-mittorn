@@ -26,7 +26,6 @@
 #include "ClientLayerManager.h"
 #include "nsDragService.h"
 #include "BasicLayers.h"
-#include "nsIScreenManager.h"
 #include "mozilla/layers/APZEventState.h"
 #include "mozilla/layers/APZThreadUtils.h"
 #include "mozilla/layers/IAPZCTreeManager.h"
@@ -103,6 +102,7 @@ nsWindow::Create(nsIWidget* aParent,
 
   // only create window for toplevel widget
   if (IsTopLevel()) {
+    nsAppShell::gAppShell->EnsureInit();
     nsAppShell::gAppShell->mTopLevelWindows.AppendElement(this);
 
     // spawn window as invisible
@@ -122,43 +122,75 @@ nsWindow::Create(nsIWidget* aParent,
     }
 
     // motor
-    mNativeWindow = SDL_CreateWindow("UXP", aRect.x, aRect.y, aRect.width, aRect.height, flags);
-    if (!mNativeWindow) { // if it's failed, reset opengl flag and retry
-      flags &= ~SDL_WINDOW_OPENGL;
+    nsAppShell::DispatchToSDLThread([this, aRect, &flags, &parent, aNativeParent] {
+
       mNativeWindow = SDL_CreateWindow("UXP", aRect.x, aRect.y, aRect.width, aRect.height, flags);
-    }
-    SDL_SetWindowData(mNativeWindow, "nsWindow", this);
+      if (!mNativeWindow) { // if it's failed, reset opengl flag and retry
+        flags &= ~SDL_WINDOW_OPENGL;
+        mNativeWindow = SDL_CreateWindow("UXP", aRect.x, aRect.y, aRect.width, aRect.height, flags);
+      }
+      SDL_SetWindowData(mNativeWindow, "nsWindow", this);
+      // set parent from native parent
+      if (!parent && aNativeParent) {
+        parent = (nsWindow *)SDL_GetWindowData((SDL_Window *)aNativeParent, "nsWindow");
+      }
+      if (parent) {
+        SDL_Window *nativeParent = (SDL_Window *)GetNativeData(NS_NATIVE_WIDGET);
+        if (nativeParent) {
+          SDL_SetWindowModalFor(mNativeWindow, nativeParent);
+        }
+      }
+
+      // initialize platform window for known platforms (mostly for EGL)
+      SDL_SysWMinfo wmInfo;
+      SDL_VERSION(&wmInfo.version);
+      if (SDL_GetWindowWMInfo(mNativeWindow, &wmInfo)) {
+        switch(wmInfo.subsystem) {
+          case SDL_SYSWM_X11:
+#ifdef SDL_VIDEO_DRIVER_X11
+            if (wmInfo.info.x11.display) {
+              nsAppShell::gAppShell->mNativePlatform = 0x31D5; //  EGL_PLATFORM_X11_KHR
+              nsAppShell::gAppShell->mPlatformDisplay = wmInfo.info.x11.display;
+            }
+            mPlatformWindow = (void*)wmInfo.info.x11.window;
+#endif
+            break;
+          case SDL_SYSWM_WAYLAND:
+#ifdef SDL_VIDEO_DRIVER_WAYLAND
+            if (wmInfo.info.wayland.display) {
+              nsAppShell::gAppShell->mNativePlatform = 0x31D8; //  EGL_PLATFORM_WAYLAND_EXT
+              nsAppShell::gAppShell->mPlatformDisplay = wmInfo.info.wayland.display;
+            }
+            mPlatformWindow = (void*)wmInfo.info.wayland.egl_window;
+#endif
+          case SDL_SYSWM_KMSDRM:
+#ifdef SDL_VIDEO_DRIVER_KMSDRM
+            if (wmInfo.info.kmsdrm.gbm_dev) {
+              nsAppShell::gAppShell->mNativePlatform = 0x31D7; //  EGL_PLATFORM_GBM_KHR
+              nsAppShell::gAppShell->mPlatformDisplay = wmInfo.info.kmsdrm.gbm_dev;
+            }
+            // it's impossible to use EGL on SDL-KMSDRM directly now
+            // SDL does not export gbm surface, so we need create and update it manually
+            // fallback to pbuffer for now if --with-gl-provider=SDL not enabled
+            mPlatformWindow = nullptr;
+#endif
+            break;
+          default:
+            break;
+        }
+      }
+
+    });
+    MOZ_ASSERT(mNativeWindow);
   }
 
-  // set parent from native parent
-  if (!parent && aNativeParent) {
-    parent = (nsWindow *)SDL_GetWindowData((SDL_Window *)aNativeParent, "nsWindow");
-  }
+
 
   if (parent) {
     parent->mChildren.AppendElement(this);
     mParent = parent;
-    if (mNativeWindow) {
-      SDL_Window *nativeParent = (SDL_Window *)GetNativeData(NS_NATIVE_WIDGET);
-      // make popups and modals draw over parent window
-      if (nativeParent) {
-        SDL_SetWindowModalFor(mNativeWindow, nativeParent);
-      }
-    }
   }
 
-  // save x11 display for EGL
-#ifdef SDL_VIDEO_DRIVER_X11
-  {
-    SDL_SysWMinfo wminfo;
-    SDL_VERSION(&wminfo.version);
-
-    if (mNativeWindow && !sX11Display &&
-        SDL_GetWindowWMInfo(mNativeWindow, &wminfo)) {
-      sX11Display = wminfo.info.x11.display;
-    }
-  }
-#endif
   NS_ASSERTION(IsTopLevel() || parent, "non top level window doesn't have a parent!");
 
   return NS_OK;
@@ -578,55 +610,22 @@ nsWindow::SetCursor(imgIContainer* aCursor,
 
 void* nsWindow::GetNativeData(uint32_t aDataType)
 {
-  void *retVal = nullptr;
-
   switch (aDataType) {
-  case NS_NATIVE_DISPLAY: {
-    // for now, only support X11 platform for EGL
-    retVal = sX11Display;
-    break;
-  }
-
+  case NS_NATIVE_DISPLAY:
+    return nsAppShell::gAppShell->mPlatformDisplay;
   case NS_NATIVE_WIDGET:
     // Use SDL_Window as widget to handle parent widgets
     return mNativeWindow;
-  case NS_NATIVE_WINDOW: {
-    // EGL code using this
-#if SDL_VIDEO_DRIVER_X11
-    SDL_SysWMinfo wminfo;
-    SDL_VERSION(&wminfo.version);
-
-    retVal = nullptr;
-    if (mNativeWindow) {
-      SDL_GetWindowWMInfo(mNativeWindow, &wminfo);
-      if(wminfo.subsystem == SDL_SYSWM_X11) {
-        retVal = (void *)wminfo.info.x11.window;
-      }
-    // hack: we do not support child widgets, so pass call
-    // to toplevel widget, so compositor will always render to toplevel
-    } else if (mParent) {
-      return mParent->GetNativeData(aDataType);
-    }
-#endif
-    break;
-  }
-
+  case NS_NATIVE_WINDOW:
+    return mPlatformWindow;
   case NS_RAW_NATIVE_IME_CONTEXT:
-    retVal = NS_ONLY_ONE_NATIVE_IME_CONTEXT;
-    break;
-  case NS_NATIVE_EGL_PLATFORM: {
-    SDL_SysWMinfo wminfo;
-    SDL_VERSION(&wminfo.version);
-    SDL_GetWindowWMInfo(mNativeWindow, &wminfo);
-    if(wminfo.subsystem == SDL_SYSWM_X11) {
-      retVal = (void *)0x31D5; //  EGL_PLATFORM_X11_KHR
-    }
-    break;
+    return NS_ONLY_ONE_NATIVE_IME_CONTEXT;
+  case NS_NATIVE_EGL_PLATFORM:
+    return (void*)(uintptr_t)nsAppShell::gAppShell->mNativePlatform;
   }
-  }
-
-  return retVal;
+  return nullptr;
 }
+
 LayoutDeviceIntPoint nsWindow::TransformCoord(int x, int y) {
   const nsWindow *fallback = mParent? mParent: this;
   const LayoutDeviceIntSize &bounds = mNativeWindow? mDrawableSize : fallback->mDrawableSize;

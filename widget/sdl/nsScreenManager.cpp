@@ -82,12 +82,8 @@ NS_IMETHODIMP
 nsScreenManager::GetPrimaryScreen(nsIScreen **outScreen)
 {
   mozilla::MutexAutoLock lock(mUpdateMutex);
-
-  // detect which screen is pointed by mouse
   if (mPrimary < 0 || mPrimary >= mNumScreens) {
-    SDL_Point point = {};
-    SDL_GetGlobalMouseState(&point.x, &point.y);
-    mPrimary = SDL_GetPointDisplayIndex(&point);
+    return NS_ERROR_NOT_AVAILABLE;
   }
 
   NS_IF_ADDREF(*outScreen = mCachedScreenArray[mPrimary]);
@@ -120,6 +116,7 @@ void nsScreenManager::UpdateScreens()
   mozilla::MutexAutoLock lock(mUpdateMutex);
   int numDisplays = SDL_GetNumVideoDisplays();
   int oldCount = mCachedScreenArray.Count();
+
   for (int i = 0; i < numDisplays; i++) {
     RefPtr<nsSDLScreen> screen;
     if (oldCount <= i) {
@@ -169,6 +166,12 @@ void nsScreenManager::UpdateScreens()
     }
   }
   mNumScreens = numDisplays;
+  // detect which screen is pointed by mouse
+  if (mPrimary < 0 || mPrimary >= mNumScreens) {
+    SDL_Point point = {};
+    SDL_GetGlobalMouseState(&point.x, &point.y);
+    mPrimary = SDL_GetPointDisplayIndex(&point);
+  }
 }
 
 NS_IMETHODIMP

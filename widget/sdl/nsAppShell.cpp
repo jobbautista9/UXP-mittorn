@@ -10,6 +10,7 @@
 #include "mozilla/Preferences.h"
 #include "base/message_loop.h"
 #include "nsThread.h"
+#include "nsThreadSyncDispatch.h"
 
 nsAppShell *nsAppShell::gAppShell = NULL;
 int nsAppShell::sForcedFullscreen = -1;
@@ -145,9 +146,28 @@ public:
   }
   NS_IMETHODIMP
   Dispatch(already_AddRefed<nsIRunnable> aRunnable, uint32_t aFlags) override {
+    if (aFlags == NS_DISPATCH_SYNC) {
+      nsIThread* thread;
+      nsresult rv =  NS_GetCurrentThread(&thread);
+      if (NS_FAILED(rv) || NS_WARN_IF(!thread)) {
+        return NS_ERROR_NOT_AVAILABLE;
+      }
+      RefPtr<nsThreadSyncDispatch> wrapper = new nsThreadSyncDispatch(thread, mozilla::Move(aRunnable));
+      nsresult ret = nsThread::Dispatch(wrapper, NS_DISPATCH_NORMAL);
+      if (NS_FAILED(ret)) {
+        // PutEvent leaked the wrapper runnable object on failure, so we
+        // explicitly release this object once for that. Note that this
+        // object will be released again soon because it exits the scope.
+        wrapper.get()->Release();
 
-    nsCOMPtr<nsIRunnable> runnable(aRunnable);
-    nsresult ret = nsThread::Dispatch(runnable.forget(), aFlags);
+      }
+      while (wrapper->IsPending()) {
+        NotifySDLThread(APPSHELL_SDL_NOTIFY_UI);
+        NS_ProcessNextEvent(thread, true);
+      }
+      return ret;
+    }
+    nsresult ret = nsThread::Dispatch(mozilla::Move(aRunnable), aFlags);
     NotifySDLThread(APPSHELL_SDL_NOTIFY_UI);
     return ret;
   }
@@ -180,7 +200,12 @@ nsresult nsAppShell::Init() {
   return nsBaseAppShell::Init();
 }
 
-NS_IMETHODIMP nsAppShell::Run() {
+// cannot run do_GetService in constructor, so this is called later when creating any window or in Run()
+void nsAppShell::EnsureInit(){
+  MOZ_ASSERT(NS_IsMainThread());
+  if (mScreenManager) {
+    return;
+  }
   nsCOMPtr<nsIScreenManager> ptr = do_GetService("@mozilla.org/gfx/screenmanager;1");
   mScreenManager = (nsScreenManager*)(nsIScreenManager *)ptr;
   if (mSeparateEventThread) {
@@ -197,6 +222,11 @@ NS_IMETHODIMP nsAppShell::Run() {
     // some events might be missed before SDL_Init, reschedule
     NotifySDLThread(APPSHELL_SDL_NOTIFY_NATICE_CB);
   }
+}
+
+
+NS_IMETHODIMP nsAppShell::Run() {
+  EnsureInit();
   return nsBaseAppShell::Run();
 }
 

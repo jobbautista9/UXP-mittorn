@@ -101,6 +101,7 @@ protected:
 
   SDL_Window *mNativeWindow;
   SDL_Surface *mSurface;
+  void *mPlatformWindow;
   bool mVisible;
   bool mScheduleResize;
   uint32_t mRotation;
