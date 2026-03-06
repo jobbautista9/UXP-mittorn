@@ -53,18 +53,12 @@ nsWindow::nsWindow()
 nsWindow::~nsWindow()
 {
   if (mNativeWindow) {
-    if (nsAppShell::gAppShell->mSeparateEventThread) {
-      SDL_Window *win = mNativeWindow;
-      nsAppShell::gAppShell->mSDLEventsThread->Dispatch(
-        NS_NewRunnableFunction([win]{
-          SDL_DestroyWindow(win);
-        }).take(), NS_DISPATCH_NORMAL);
-    } else {
+    SDL_Window *win = mNativeWindow;
+    nsAppShell::DispatchToSDLThread([win]{
       MutexAutoLock lock(nsAppShell::gAppShell->mEventsMutex);
-      SDL_DestroyWindow(mNativeWindow);
-    }
+      SDL_DestroyWindow(win);
+    }, false);
   }
-  mNativeWindow = nullptr;
 }
 
 // SDL does not support child widgets, so make everything toplevel except child widgets
@@ -81,7 +75,7 @@ nsWindow::IsTopLevel()
 //
 // nsIWidget
 //
-static void *sX11Display;
+
 nsresult
 nsWindow::Create(nsIWidget* aParent,
                  nsNativeWidget aNativeParent,
@@ -179,7 +173,7 @@ nsWindow::Create(nsIWidget* aParent,
             break;
         }
       }
-
+      mDisplayIndex = SDL_GetWindowDisplayIndex(mNativeWindow);
     });
     MOZ_ASSERT(mNativeWindow);
   }
@@ -224,14 +218,9 @@ nsWindow::Destroy()
 
     DestroyCompositor();
     NotifyWindowDestroyed();
-    if (nsAppShell::gAppShell->mSeparateEventThread) {
-      nsAppShell::gAppShell->mSDLEventsThread->Dispatch(
-        NS_NewRunnableFunction([win]{
-          SDL_DestroyWindow(win);
-        }).take(), NS_DISPATCH_NORMAL);
-    } else {
+    nsAppShell::DispatchToSDLThread([win]{
       SDL_DestroyWindow(win);
-    }
+    }, false);
   }
 
   nsBaseWidget::Destroy();
@@ -260,11 +249,16 @@ nsWindow::Show(bool aState)
   if (!mNativeWindow) {
     return NS_OK;
   }
-  if (aState) {
-    SDL_ShowWindow(mNativeWindow);
+  nsAppShell::DispatchToSDLThread([this]{
+    if (mVisible) {
+      SDL_ShowWindow(mNativeWindow);
+      mDisplayIndex = SDL_GetWindowDisplayIndex(mNativeWindow);
+    } else {
+      SDL_HideWindow(mNativeWindow);
+    }
+  });
+  if (mVisible) {
     ScheduleResize();
-  } else {
-    SDL_HideWindow(mNativeWindow);
   }
 
   return NS_OK;
@@ -276,7 +270,10 @@ nsWindow::Move(double aX, double aY)
   mBounds.x = aX;
   mBounds.y = aY;
   if (mNativeWindow) {
-    SDL_SetWindowPosition(mNativeWindow, aX, aY);
+    SDL_Window *win = mNativeWindow;
+    nsAppShell::DispatchToSDLThread([win, aX, aY]{
+      SDL_SetWindowPosition(win, aX, aY);
+    }, false);
   }
 
   ReportMoveEvent();
@@ -299,7 +296,10 @@ nsWindow::Resize(double aX, double aY,
     mBounds.y = aY;
 
     if (mNativeWindow) {
-      SDL_SetWindowPosition(mNativeWindow, aX, aY);
+      SDL_Window *win = mNativeWindow;
+      nsAppShell::DispatchToSDLThread([win, aX, aY]{
+        SDL_SetWindowPosition(win, aX, aY);
+      }, false);
     }
   }
   if (isResizing) {
@@ -361,15 +361,17 @@ void nsWindow::ScheduleResize()
 {
   if (nsAppShell::GetForcedFullscreen() > 0) {
     if (!mDrawableSize.width && mVisible) {
-      SDL_SetWindowFullscreen(mNativeWindow, SDL_WINDOW_FULLSCREEN_DESKTOP);
-      SDL_PumpEvents();
-      SDL_GetWindowSizeInPixels(mNativeWindow, &mDrawableSize.width, &mDrawableSize.height);
+      nsAppShell::DispatchToSDLThread([this]{
+        SDL_SetWindowFullscreen(mNativeWindow, SDL_WINDOW_FULLSCREEN_DESKTOP);
+        SDL_PumpEvents();
+        SDL_GetWindowSizeInPixels(mNativeWindow, &mDrawableSize.width, &mDrawableSize.height);
 
-      // fake fullscreen requested, revert back to windowed
-      if (nsAppShell::GetForcedFullscreen() == 2) {
-        SDL_SetWindowFullscreen(mNativeWindow, 0);
-        SDL_SetWindowSize(mNativeWindow, mDrawableSize.width, mDrawableSize.height);
-      }
+        // fake fullscreen requested, revert back to windowed
+        if (nsAppShell::GetForcedFullscreen() == 2) {
+          SDL_SetWindowFullscreen(mNativeWindow, 0);
+          SDL_SetWindowSize(mNativeWindow, mDrawableSize.width, mDrawableSize.height);
+        }
+      });
       RefPtr<nsIScreen> scr = GetWidgetScreen();
       uint32_t id, rot;
       scr->GetId(&id);
@@ -412,8 +414,12 @@ nsWindow::Invalidate(const LayoutDeviceIntRect& aRect)
 
 NS_IMETHODIMP nsWindow::MakeFullScreen(bool aFullScreen, nsIScreen* aScreen)
 {
-  if (mNativeWindow) {
-    SDL_SetWindowFullscreen(mNativeWindow, aFullScreen ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0);
+  if (mNativeWindow && !nsAppShell::GetForcedFullscreen()) {
+    SDL_Window *win = mNativeWindow;
+    nsAppShell::DispatchToSDLThread([win, aFullScreen]{
+      SDL_SetWindowFullscreen(win, aFullScreen ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0);
+    }, false);
+
   }
   SetSizeMode(aFullScreen ? nsSizeMode_Fullscreen : nsSizeMode_Normal);
   // without this browser stops updating window. Why?
@@ -424,7 +430,10 @@ NS_IMETHODIMP
 nsWindow::SetFocus(bool aRaise)
 {
   if (mNativeWindow && aRaise) {
-    SDL_RaiseWindow(mNativeWindow);
+    SDL_Window *win = mNativeWindow;
+    nsAppShell::DispatchToSDLThread([win]{
+      SDL_RaiseWindow(win);
+    }, false);
   }
   return NS_OK;
 }
@@ -516,11 +525,14 @@ nsWindow::SetInputContext(const InputContext& aContext,
                           const InputContextAction& aAction)
 {
   mInputContext = aContext;
-  if (aAction.mFocusChange == InputContextAction::LOST_FOCUS) {
-    SDL_StopTextInput();
-  } else {
-    SDL_StartTextInput();
-  }
+  bool start = aAction.mFocusChange == InputContextAction::LOST_FOCUS;
+  nsAppShell::DispatchToSDLThread([start]{
+    if (start) {
+      SDL_StopTextInput();
+    } else {
+      SDL_StartTextInput();
+    }
+  }, false);
 }
 
 NS_IMETHODIMP_(mozilla::widget::InputContext)
@@ -548,7 +560,10 @@ NS_IMETHODIMP nsWindow::SetTitle(const nsAString& aTitle)
     }
     titleUTF8.Truncate(len);
   }
-  SDL_SetWindowTitle(mNativeWindow, (const char *)titleUTF8.get());
+  SDL_Window *win = mNativeWindow;
+  nsAppShell::DispatchToSDLThread([win, titleUTF8]{
+    SDL_SetWindowTitle(win, (const char *)titleUTF8.get());
+  }, false);
 
   return NS_OK;
 }
@@ -568,10 +583,12 @@ NS_IMETHODIMP nsWindow::SetCursor(nsCursor aCursor)
     return mParent->SetCursor(aCursor);
   }
 
-  SDL_Cursor *newCursor = GetSDLCursor(aCursor);
-  if (newCursor) {
-    SDL_SetCursor(newCursor);
-  }
+  nsAppShell::DispatchToSDLThread([aCursor]{
+    SDL_Cursor *newCursor = GetSDLCursor(aCursor);
+    if (newCursor) {
+      SDL_SetCursor(newCursor);
+    }
+  }, false);
 
   return NS_OK;
 }
@@ -588,23 +605,25 @@ nsWindow::SetCursor(imgIContainer* aCursor,
   if (!newSurface) {
     return NS_ERROR_FAILURE;
   }
+  nsresult ret = NS_OK;
+  nsAppShell::DispatchToSDLThread([&ret, newSurface, aHotspotX, aHotspotY, oldCursor, oldSurface]{
+    SDL_Cursor *newCursor = SDL_CreateColorCursor(newSurface, aHotspotX, aHotspotY);
+    if (!newCursor) {
+      SDL_FreeSurface(newSurface);
+      ret =  NS_ERROR_FAILURE;
+    }
+    SDL_SetCursor(newCursor);
+    sCursorSurface = newSurface;
+    sCursor = newCursor;
+    if (oldCursor) {
+      SDL_FreeCursor(oldCursor);
+    }
+    if (oldSurface) {
+      SDL_FreeSurface(oldSurface);
+    }
+  });
 
-  SDL_Cursor *newCursor = SDL_CreateColorCursor(newSurface, aHotspotX, aHotspotY);
-  if (!newCursor) {
-    SDL_FreeSurface(newSurface);
-    return NS_ERROR_FAILURE;
-  }
-  SDL_SetCursor(newCursor);
-  sCursorSurface = newSurface;
-  sCursor = newCursor;
-  if (oldCursor) {
-    SDL_FreeCursor(oldCursor);
-  }
-  if (oldSurface) {
-    SDL_FreeSurface(oldSurface);
-  }
-
-  return NS_OK;
+  return ret;
 }
 
 
@@ -654,7 +673,7 @@ LayoutDeviceIntPoint nsWindow::TransformCoord(int x, int y) {
   }
   return {};
 }
-
+static bool sDrawing = false;
 void nsWindow::HandleResize(int aW, int aH) {
   int w, h;
 
@@ -675,8 +694,9 @@ void nsWindow::HandleResize(int aW, int aH) {
   if (!mLayerManager) {
      return;
   }
-  MutexAutoLock lock(nsAppShell::gAppShell->mEventsMutex);
+
   if (ClientLayerManager *mgr = mLayerManager->AsClientLayerManager()) {
+    MutexAutoLock lock(nsAppShell::gAppShell->mEventsMutex);
     mgr->SetDefaultTargetConfiguration(BufferMode::BUFFER_NONE, (ScreenRotation)mRotation);
   }
 }
@@ -716,23 +736,28 @@ static nsWindow *sDragWindow;
 
 void nsWindow::HandleInvalidWindows()
 {
-  nsTArray<InvalidWindow> &windows = nsAppShell::gAppShell->mInvalidWindows;
+  nsTArray<InvalidWindow> windows = mozilla::Move(nsAppShell::gAppShell->mInvalidWindows);
   for (uint32_t i = 0; i < windows.Length(); ++i) {
     nsWindow *w = windows[i].window;
 
-    // first, apply actual size
-    if (w->mScheduleResize) {
-      MutexAutoLock lock(nsAppShell::gAppShell->mEventsMutex);
-      SDL_SetWindowSize(w->mNativeWindow, w->mBounds.width, w->mBounds.height);
-      // ensure bounds before drawing
-      SDL_GetWindowSize(w->mNativeWindow, &w->mBounds.width, &w->mBounds.height);
+    // todo: ScheduleResize was not intended for separate thread, refactor this...
+    if (w->mScheduleResize && !sDrawing) {
+      nsAppShell::DispatchToSDLThread([w]{
+        if (sDrawing)
+          return;
+        MutexAutoLock lock(nsAppShell::gAppShell->mEventsMutex);
+        // first, apply actual size
+        SDL_SetWindowSize(w->mNativeWindow, w->mBounds.width, w->mBounds.height);
+        SDL_PumpEvents();
+        // ensure bounds before drawing
+        SDL_GetWindowSize(w->mNativeWindow, &w->mBounds.width, &w->mBounds.height);
+        w->mDisplayIndex = SDL_GetWindowDisplayIndex(w->mNativeWindow);
+        w->mScheduleResize = false;
+      });
     }
-    w->mScheduleResize = false;
 
     w->ExposeRegion(windows[i].region);
   }
-
-  windows.Clear();
 
   if (!sDragWindow) {
     return;
@@ -740,6 +765,7 @@ void nsWindow::HandleInvalidWindows()
 
   WidgetMouseEvent event(true, eMouseUp, sDragWindow, WidgetMouseEvent::eReal);
   int x, y;
+  // todo: move to events thread
   Uint32 buttons = SDL_GetGlobalMouseState(&x, &y);
 
   if (!buttons) {
@@ -760,16 +786,32 @@ void nsWindow::HandleInvalidWindows()
 already_AddRefed<mozilla::gfx::DrawTarget> nsWindow::StartRemoteDrawing()
 {
   // prevent resizing in other thead while surface locked
-  nsAppShell::gAppShell->mEventsMutex.Lock();
-  if (!mNativeWindow) {
-    nsAppShell::gAppShell->mEventsMutex.Unlock();
+  if (!mNativeWindow || !mVisible || sDrawing) {
     return nullptr;
   }
-  mSurface = SDL_GetWindowSurface(mNativeWindow);
+  // block sdl event processing
+  sDrawing = true;
+  nsAppShell::gAppShell->mEventsMutex.Lock();
+  if (nsAppShell::gAppShell->mSeparateEventThread) {
+    // post task that processing native events, but not sdl while sDrawing is true
+    nsAppShell::DispatchToSDLThread([this] {
+      bool ret = true;
+      while(sDrawing) {
+        nsAppShell::gAppShell->mSDLEventsThread->ProcessNextEvent(true, &ret);
+      }
+    }, false);
+  }
 
-  NS_ASSERTION(mSurface, SDL_GetError());
+  nsAppShell::DispatchToSDLThread([this] {
+    mSurface = SDL_GetWindowSurface(mNativeWindow);
+    NS_ASSERTION(mSurface, SDL_GetError());
+  });
+
   if (!mSurface) {
     nsAppShell::gAppShell->mEventsMutex.Unlock();
+    nsAppShell::DispatchToSDLThread([this] {
+      sDrawing = false;
+    });
     return nullptr;
   }
   SDL_LockSurface(mSurface);
@@ -783,7 +825,26 @@ already_AddRefed<mozilla::gfx::DrawTarget> nsWindow::StartRemoteDrawing()
 void nsWindow::EndRemoteDrawing()
 {
   SDL_UnlockSurface(mSurface);
-  SDL_UpdateWindowSurface(mNativeWindow);
+
+  if (nsAppShell::gAppShell->mSeparateEventThread) {
+    nsAppShell::DispatchToSDLThread([this] {
+      SDL_PumpEvents();
+      int ow = mSurface->w, oh = mSurface->h, w, h;
+      SDL_GetWindowSizeInPixels(mNativeWindow, &w, &h);
+      mSurface = SDL_GetWindowSurface(mNativeWindow);
+      if (!mSurface || w != ow || h != oh || w != mSurface->w || h != mSurface->h) {
+        SDL_DestroyWindowSurface(mNativeWindow);
+        mSurface = nullptr;
+      } else {
+        SDL_UpdateWindowSurface(mNativeWindow);
+      }
+    });
+    sDrawing = false;
+  } else {
+     SDL_UpdateWindowSurface(mNativeWindow);
+    sDrawing = false;
+  }
+
   nsAppShell::gAppShell->mEventsMutex.Unlock();
 }
 
@@ -800,8 +861,36 @@ void nsWindow::EndRemoteDrawingInRegion(mozilla::gfx::DrawTarget* aDrawTarget,
     SDL_Rect rect = {(short)r.x, (short)r.y, (unsigned short)r.width, (unsigned short)r.height};
     rects.AppendElement(rect);
   }
+  if (nsAppShell::gAppShell->mSeparateEventThread) {
+    nsAppShell::DispatchToSDLThread([this, rects] {
+      // when running in separate thread, main thread window bounds may not match real window size
+      // pump events and validate size, otherwise SDL may crash
+      SDL_PumpEvents();
+      int ow = mSurface->w, oh = mSurface->h, w, h;
+      SDL_GetWindowSizeInPixels(mNativeWindow, &w, &h);
+      mSurface = SDL_GetWindowSurface(mNativeWindow);
+      bool rectsValid = true;
+      for (int i = 0; i < rects.Length(); i++) {
+        if(rects[i].x + rects[i].w > w)
+          rectsValid = false;
+        if(rects[i].y + rects[i].h > h)
+          rectsValid = false;
+      }
 
-  SDL_UpdateWindowSurfaceRects(mNativeWindow, rects.Elements(), rects.Length());
+      if (!mSurface || w != ow || h != oh || w != mSurface->w || h != mSurface->h || !rectsValid) {
+        SDL_DestroyWindowSurface(mNativeWindow);
+        mSurface = nullptr;
+      } else {
+        SDL_UpdateWindowSurfaceRects(mNativeWindow, rects.Elements(), rects.Length());
+      }
+      // return to normal event processing
+      sDrawing = false;
+    });
+  } else {;
+    SDL_UpdateWindowSurfaceRects(mNativeWindow, rects.Elements(), rects.Length());
+    sDrawing = false;
+  }
+
   nsAppShell::gAppShell->mEventsMutex.Unlock();
 }
 
@@ -1082,12 +1171,6 @@ bool nsWindow::OnEvent(const SDL_Event *ev)
         ReportMoveEvent();
       }
       break;
-    case SDL_WINDOWEVENT_RESIZED:
-      if (mNativeWindow && nsAppShell::GetForcedFullscreen() < 1) {
-        SDL_GetWindowSizeInPixels(mNativeWindow, &mDrawableSize.width, &mDrawableSize.height);
-        HandleResize(ev->window.data1, ev->window.data2);
-      }
-      break;
     case SDL_WINDOWEVENT_LEAVE:
     case SDL_WINDOWEVENT_ENTER:
     case SDL_WINDOWEVENT_FOCUS_LOST:
@@ -1207,6 +1290,27 @@ bool nsWindow::PreprocessEvent(SDL_Event *ev, nsWindow **aWindow)
     break;
   case SDL_WINDOWEVENT:
     winId = ev->window.windowID;
+    switch (ev->window.event) {
+      case SDL_WINDOWEVENT_MOVED: {
+        SDL_Window *win = SDL_GetWindowFromID(winId);
+        *aWindow = (nsWindow *)SDL_GetWindowData(win, "nsWindow");
+        (*aWindow)->mDisplayIndex = SDL_GetWindowDisplayIndex(win);
+        return true;
+      }
+      case SDL_WINDOWEVENT_RESIZED:{
+        SDL_Window *win = SDL_GetWindowFromID(winId);
+        nsWindow *w = (nsWindow *)SDL_GetWindowData(win, "nsWindow");
+        SDL_GetWindowSizeInPixels(win, &w->mDrawableSize.width, &w->mDrawableSize.height);
+        int width = ev->window.data1;
+        int height = ev->window.data2;
+        w->mDisplayIndex = SDL_GetWindowDisplayIndex(win);
+        return nsAppShell::PostToMainThread(ev,[w, width, height] {
+          if  (!w->mScheduleResize) {
+            w->HandleResize(width, height);
+          }
+        });
+      }
+    }
     break;
   case SDL_TEXTINPUT:
     winId = ev->text.windowID;

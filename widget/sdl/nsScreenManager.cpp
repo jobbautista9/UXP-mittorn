@@ -159,6 +159,7 @@ void nsScreenManager::UpdateScreens()
       SDL_Window *win = (SDL_Window *)nsWin->GetNativeData(NS_NATIVE_WIDGET);
       if (win && SDL_GetWindowDisplayIndex(win) == i) {
         int rotation = screen->mRotation;
+        nsWin->mDisplayIndex = i;
         NS_DispatchToMainThread(NS_NewRunnableFunction([nsWin, i, rotation]{
           nsWin->ScreenRotationChanged(i, rotation);
         }));
@@ -178,20 +179,20 @@ NS_IMETHODIMP
 nsScreenManager::ScreenForNativeWidget(void *aWidget, nsIScreen **outScreen)
 {
   mozilla::MutexAutoLock lock(mUpdateMutex);
-  SDL_Window *win = nullptr;
+  nsWindow *win = nullptr;
 
   // for some reason, native window, not widget passed, so find the widget
   for (int i = 0; i < nsAppShell::gAppShell->mTopLevelWindows.Length(); i++) {
-    nsIWidget *nsWin = nsAppShell::gAppShell->mTopLevelWindows[i];
+    nsWindow *nsWin = nsAppShell::gAppShell->mTopLevelWindows[i];
     if (nsWin->GetNativeData(NS_NATIVE_WINDOW) == aWidget) {
-      win = (SDL_Window *)nsWin->GetNativeData(NS_NATIVE_WIDGET);
+      win = nsWin;
       break;
     }
   }
   if (!win) {
     return NS_ERROR_FAILURE;
   }
-  int index = SDL_GetWindowDisplayIndex(win);
+  int index = win->mDisplayIndex;
   NS_IF_ADDREF(*outScreen = mCachedScreenArray[index]);
   return NS_OK;
 }

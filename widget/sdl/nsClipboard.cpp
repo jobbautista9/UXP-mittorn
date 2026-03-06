@@ -7,6 +7,7 @@
 #include "nsISupportsPrimitives.h"
 #include "nsCOMPtr.h"
 #include "nsComponentManagerUtils.h"
+#include "nsAppShell.h"
 #include <SDL.h>
 
 using namespace mozilla;
@@ -42,11 +43,14 @@ nsClipboard::SetData(nsITransferable *aTransferable,
 //  supportsString->GetData(buffer);
   len = buffer.Length();
   char *u8 = ToNewUTF8String(buffer, &len);
-  if (aWhichClipboard == kGlobalClipboard) {
-    SDL_SetClipboardText(u8);
-  } else {
-    SDL_SetPrimarySelectionText(u8);
-  }
+  nsAppShell::DispatchToSDLThread([aWhichClipboard, u8] {
+    if (aWhichClipboard == kGlobalClipboard) {
+      SDL_SetClipboardText(u8);
+    } else {
+      SDL_SetPrimarySelectionText(u8);
+    }
+    free(u8);
+  }, false);
 
   return NS_OK;
 }
@@ -59,7 +63,10 @@ nsClipboard::GetData(nsITransferable *aTransferable, int32_t aWhichClipboard)
   }
 
   nsAutoString buffer;
-  const char *text = aWhichClipboard == kGlobalClipboard ? SDL_GetClipboardText() : SDL_GetPrimarySelectionText();
+  const char *text;
+  nsAppShell::DispatchToSDLThread([aWhichClipboard, &text] {
+    text = aWhichClipboard == kGlobalClipboard ? SDL_GetClipboardText() : SDL_GetPrimarySelectionText();
+  });
   NS_ConvertUTF8toUTF16 ucs2string(text);
   SDL_free((void*)text);
 
@@ -88,11 +95,13 @@ nsClipboard::EmptyClipboard(int32_t aWhichClipboard)
   if (aWhichClipboard != kGlobalClipboard && aWhichClipboard != kSelectionClipboard) {
     return NS_ERROR_NOT_IMPLEMENTED;
   }
-  if (aWhichClipboard == kGlobalClipboard) {
-    SDL_SetClipboardText("");
-  } else {
-    SDL_SetPrimarySelectionText("");
-  }
+  nsAppShell::DispatchToSDLThread([aWhichClipboard] {
+    if (aWhichClipboard == kGlobalClipboard) {
+      SDL_SetClipboardText("");
+    } else {
+      SDL_SetPrimarySelectionText("");
+    }
+  }, false);
   
   return NS_OK;
 }
@@ -106,7 +115,9 @@ nsClipboard::HasDataMatchingFlavors(const char **aFlavorList,
   if (aWhichClipboard != kGlobalClipboard && aWhichClipboard != kSelectionClipboard) {
     return NS_ERROR_NOT_IMPLEMENTED;
   }
-  *aHasText = aWhichClipboard == kGlobalClipboard?SDL_HasClipboardText() : SDL_HasPrimarySelectionText();
+  nsAppShell::DispatchToSDLThread([aWhichClipboard, aHasText] {
+    *aHasText = aWhichClipboard == kGlobalClipboard?SDL_HasClipboardText() : SDL_HasPrimarySelectionText();
+  });
   return NS_OK;
 }
 

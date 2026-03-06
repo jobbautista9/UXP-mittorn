@@ -104,6 +104,7 @@ protected:
   void *mPlatformWindow;
   bool mVisible;
   bool mScheduleResize;
+  uint16_t mDisplayIndex;
   uint32_t mRotation;
   nsTArray<nsWindow *> mChildren;
   nsWindow *mParent;
@@ -119,6 +120,7 @@ protected:
   nsClassHashtable<nsUint64HashKey, mozilla::SingleTouchData> mTouches;
   int mMaxTouchFingerCount;
   bool mHandleTouchEvent;
+  friend class nsScreenManager;
 };
 
 #endif /* NSWINDOW_H_ */
