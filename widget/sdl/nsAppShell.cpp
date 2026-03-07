@@ -79,14 +79,19 @@ NS_IMETHODIMP SDLThread::Run() {
   nsAppShell::gAppShell->mSDLEventsLoop = MessageLoop::current();
   nsAppShell::gAppShell->NotifyEvent();
   while(true) {
-    SDL_WaitEvent(&ev->mEvent);
-
-    bool ret = true;
-    while(ret) {
+    bool ret = true, hasEvents = true;
+    while (ret || hasEvents) {
       nsAppShell::gAppShell->mSDLEventsThread->ProcessNextEvent(false, &ret);
+      nsAppShell::gAppShell->mSDLEventsThread->HasPendingEvents(&hasEvents);
     }
     if(sThreadShutdown)
       break;
+    SDL_WaitEvent(&ev->mEvent);
+    ret = hasEvents = true;
+    while (ret || hasEvents) {
+      nsAppShell::gAppShell->mSDLEventsThread->ProcessNextEvent(false, &ret);
+      nsAppShell::gAppShell->mSDLEventsThread->HasPendingEvents(&hasEvents);
+    }
 
     HandleScreenEvents(&ev->mEvent);
     if (nsWindow::PreprocessEvent(&ev->mEvent, &ev->mWindow)) {

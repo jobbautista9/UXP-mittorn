@@ -12,6 +12,7 @@
 
 #include "mozilla/Mutex.h"
 #include "mozilla/CondVar.h"
+#include "mozilla/SyncRunnable.h"
 #include "nsBaseAppShell.h"
 #include "nsScreenManager.h"
 #include "nsWindow.h"
@@ -106,12 +107,20 @@ public:
   template <typename func>
   static inline void DispatchToSDLThread(func&& aCb, bool aWait = true) {
     if (gAppShell->mSeparateEventThread) {
-      nsresult rv = gAppShell->mSDLEventsThread->Dispatch(new mozilla::detail::RunnableFunction
+      if (aWait) {
+        mozilla::SyncRunnable::DispatchToThread(gAppShell->mSDLEventsThread, (new mozilla::detail::RunnableFunction
+                                                                              // Make sure we store a non-reference in nsRunnableFunction.
+                                                                              <typename mozilla::RemoveReference<func>::Type>
+                                                                              // But still forward aFunction to move if possible.
+                                                                              (mozilla::Forward<func>(aCb))));
+      } else {
+        nsresult rv = gAppShell->mSDLEventsThread->Dispatch(new mozilla::detail::RunnableFunction
                                             // Make sure we store a non-reference in nsRunnableFunction.
                                             <typename mozilla::RemoveReference<func>::Type>
                                             // But still forward aFunction to move if possible.
-                                            (mozilla::Forward<func>(aCb)), aWait?NS_DISPATCH_SYNC:NS_DISPATCH_NORMAL);
-      MOZ_ASSERT(!NS_FAILED(rv));
+                                            (mozilla::Forward<func>(aCb)), NS_DISPATCH_NORMAL);
+        MOZ_ASSERT(!NS_FAILED(rv));
+      }
     } else {
       aCb();
     }
