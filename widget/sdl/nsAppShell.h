@@ -57,6 +57,7 @@ public:
   mozilla::Mutex mEventsMutex;
   nsTArray<InvalidWindow> mInvalidWindows;
   nsTArray<nsWindow *> mTopLevelWindows;
+  nsTArray<SDL_Window *> mDestroyedWindows;
 
   nsCOMPtr<nsIThread> mSDLEventsThread;
   MessageLoop* mSDLEventsLoop;

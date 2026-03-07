@@ -55,9 +55,9 @@ nsWindow::~nsWindow()
   if (mNativeWindow) {
     SDL_Window *win = mNativeWindow;
     nsAppShell::DispatchToSDLThread([win]{
-      MutexAutoLock lock(nsAppShell::gAppShell->mEventsMutex);
-      SDL_DestroyWindow(win);
-    }, false);
+      SDL_SetWindowData(win, "nsWindow", nullptr);
+      nsAppShell::gAppShell->mDestroyedWindows.AppendElement(win);
+    });
   }
 }
 
@@ -208,8 +208,6 @@ nsWindow::Destroy()
   SDL_Window *win = mNativeWindow;
   mNativeWindow = nullptr;
   if (win) {
-    // prevent drawing while destroying
-    MutexAutoLock lock(nsAppShell::gAppShell->mEventsMutex);
     /** Need to clean our LayerManager up while still alive */
     if (mLayerManager) {
         mLayerManager->Destroy();
@@ -218,9 +216,15 @@ nsWindow::Destroy()
 
     DestroyCompositor();
     NotifyWindowDestroyed();
+    // although SDL_PushEvent marked as thread-safe, buggy SendWakeupEvent
+    // implementation sometimes tries wakeup destroyed windows, causing XError on X11,
+    // when SDL_PushEvent+SDL_WaitEvent used from multiple threads
+    // reset our private data and wait for task to complete to prevent dispatching events on "destroyed" windows
+    // SDL_DestroyWindow will be called later after some events processed
     nsAppShell::DispatchToSDLThread([win]{
-      SDL_DestroyWindow(win);
-    }, false);
+      SDL_SetWindowData(win, "nsWindow", nullptr);
+      nsAppShell::gAppShell->mDestroyedWindows.AppendElement(win);
+    });
   }
 
   nsBaseWidget::Destroy();
@@ -673,7 +677,7 @@ LayoutDeviceIntPoint nsWindow::TransformCoord(int x, int y) {
   }
   return {};
 }
-static bool sDrawing = false;
+
 void nsWindow::HandleResize(int aW, int aH) {
   int w, h;
 
@@ -733,7 +737,8 @@ void nsWindow::ScreenRotationChanged(int aScreenIndex, uint32_t aRotation) {
 /* track mouse state while dragging outside window
  * this needed to simulate dragging tabs out of browser window */
 static nsWindow *sDragWindow;
-
+// something like mutex TryLock
+static bool sDrawing = false;
 void nsWindow::HandleInvalidWindows()
 {
   nsTArray<InvalidWindow> windows = mozilla::Move(nsAppShell::gAppShell->mInvalidWindows);
@@ -780,6 +785,8 @@ void nsWindow::HandleInvalidWindows()
   }
 }
 
+static bool sDrawingLoop = false;
+
 /* this implements surface locking/unlocking for software drawing
  * Might be called from compositor thread while OMTC not accelerated
  * or from ExposeRegion */
@@ -796,7 +803,8 @@ already_AddRefed<mozilla::gfx::DrawTarget> nsWindow::StartRemoteDrawing()
     // post task that processing native events, but not sdl while sDrawing is true
     nsAppShell::DispatchToSDLThread([this] {
       bool ret = true;
-      while(sDrawing) {
+      sDrawingLoop = true;
+      while(sDrawingLoop) {
         nsAppShell::gAppShell->mSDLEventsThread->ProcessNextEvent(true, &ret);
       }
     }, false);
@@ -808,10 +816,11 @@ already_AddRefed<mozilla::gfx::DrawTarget> nsWindow::StartRemoteDrawing()
   });
 
   if (!mSurface) {
-    nsAppShell::gAppShell->mEventsMutex.Unlock();
     nsAppShell::DispatchToSDLThread([this] {
-      sDrawing = false;
+      sDrawingLoop = false;
     });
+    nsAppShell::gAppShell->mEventsMutex.Unlock();
+    sDrawing = false;
     return nullptr;
   }
   SDL_LockSurface(mSurface);
@@ -838,14 +847,15 @@ void nsWindow::EndRemoteDrawing()
       } else {
         SDL_UpdateWindowSurface(mNativeWindow);
       }
+      sDrawingLoop = false;
     });
-    sDrawing = false;
   } else {
      SDL_UpdateWindowSurface(mNativeWindow);
-    sDrawing = false;
   }
 
   nsAppShell::gAppShell->mEventsMutex.Unlock();
+  sDrawing = false;
+
 }
 
 void nsWindow::EndRemoteDrawingInRegion(mozilla::gfx::DrawTarget* aDrawTarget,
@@ -884,14 +894,15 @@ void nsWindow::EndRemoteDrawingInRegion(mozilla::gfx::DrawTarget* aDrawTarget,
         SDL_UpdateWindowSurfaceRects(mNativeWindow, rects.Elements(), rects.Length());
       }
       // return to normal event processing
-      sDrawing = false;
+      sDrawingLoop = false;
     });
   } else {;
     SDL_UpdateWindowSurfaceRects(mNativeWindow, rects.Elements(), rects.Length());
-    sDrawing = false;
   }
 
   nsAppShell::gAppShell->mEventsMutex.Unlock();
+  sDrawing = false;
+
 }
 
 /* handle window update */
@@ -1291,15 +1302,25 @@ bool nsWindow::PreprocessEvent(SDL_Event *ev, nsWindow **aWindow)
   case SDL_WINDOWEVENT:
     winId = ev->window.windowID;
     switch (ev->window.event) {
+      case SDL_WINDOWEVENT_DISPLAY_CHANGED:
       case SDL_WINDOWEVENT_MOVED: {
         SDL_Window *win = SDL_GetWindowFromID(winId);
+        if (!win) {
+          return false;
+        }
         *aWindow = (nsWindow *)SDL_GetWindowData(win, "nsWindow");
+        if (!*aWindow) {
+          return false;
+        }
         (*aWindow)->mDisplayIndex = SDL_GetWindowDisplayIndex(win);
         return true;
       }
       case SDL_WINDOWEVENT_RESIZED:{
         SDL_Window *win = SDL_GetWindowFromID(winId);
         nsWindow *w = (nsWindow *)SDL_GetWindowData(win, "nsWindow");
+        if (!w) {
+          return false;
+        }
         SDL_GetWindowSizeInPixels(win, &w->mDrawableSize.width, &w->mDrawableSize.height);
         int width = ev->window.data1;
         int height = ev->window.data2;
@@ -1310,6 +1331,21 @@ bool nsWindow::PreprocessEvent(SDL_Event *ev, nsWindow **aWindow)
           }
         });
       }
+      case SDL_WINDOWEVENT_SHOWN:
+      {
+        // prevent drawing while destroying
+        if (!sDrawing) {
+          MutexAutoLock lock(nsAppShell::gAppShell->mEventsMutex);
+          // late-destroy scheduled windows after opening any new window
+          // internal wakeup_window pointer should be updated here, so this should help from crashing
+          nsTArray<SDL_Window*> arr = mozilla::Move(nsAppShell::gAppShell->mDestroyedWindows);
+          printf("destroy windows %d %d\n", ev->window.event, (int)arr.Length());
+          for (uint32_t i = 0; i < arr.Length(); ++i) {
+            SDL_DestroyWindow(arr[i]);
+          }
+        }
+        break;
+      }
     }
     break;
   case SDL_TEXTINPUT:
@@ -1318,6 +1354,9 @@ bool nsWindow::PreprocessEvent(SDL_Event *ev, nsWindow **aWindow)
   case SDL_MOUSEMOTION: {
     winId = ev->motion.windowID;
     SDL_Window *win = SDL_GetWindowFromID(winId);
+    if (!win) {
+      return false;
+    }
     nsWindow *w = (nsWindow *)SDL_GetWindowData(win, "nsWindow");
     if (!w) {
       return false;
@@ -1366,6 +1405,9 @@ bool nsWindow::PreprocessEvent(SDL_Event *ev, nsWindow **aWindow)
   case SDL_MOUSEBUTTONDOWN: {
     winId = ev->button.windowID;
     SDL_Window *win = SDL_GetWindowFromID(winId);
+    if (!win) {
+      return false;
+    }
     nsWindow *w = (nsWindow *)SDL_GetWindowData(win, "nsWindow");
     if (!w) {
       return false;
@@ -1447,6 +1489,9 @@ bool nsWindow::PreprocessEvent(SDL_Event *ev, nsWindow **aWindow)
   case SDL_MOUSEWHEEL: {
     winId = ev->wheel.windowID;
     SDL_Window *win = SDL_GetWindowFromID(winId);
+    if (!win) {
+      return false;
+    }
     nsWindow *w = (nsWindow *)SDL_GetWindowData(win, "nsWindow");
     if (!w) {
       return false;
@@ -1496,6 +1541,9 @@ bool nsWindow::PreprocessEvent(SDL_Event *ev, nsWindow **aWindow)
   case SDL_FINGERUP: {
     winId = ev->tfinger.windowID;
     SDL_Window *win = SDL_GetWindowFromID(winId);
+    if (!win) {
+      return false;
+    }
     nsWindow *w = (nsWindow *)SDL_GetWindowData(win, "nsWindow");
     if (!w) {
       return false;
