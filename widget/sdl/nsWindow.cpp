@@ -1322,8 +1322,9 @@ bool nsWindow::PreprocessEvent(SDL_Event *ev, nsWindow **aWindow)
           return false;
         }
         SDL_GetWindowSizeInPixels(win, &w->mDrawableSize.width, &w->mDrawableSize.height);
-        int width = ev->window.data1;
-        int height = ev->window.data2;
+        int width;
+        int height;
+        SDL_GetWindowSize(win, &width, &height);
         w->mDisplayIndex = SDL_GetWindowDisplayIndex(win);
         return nsAppShell::PostToMainThread(ev,[w, width, height] {
           if  (!w->mScheduleResize) {
