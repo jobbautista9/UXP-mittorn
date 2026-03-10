@@ -1336,7 +1336,9 @@ bool nsWindow::PreprocessEvent(SDL_Event *ev, nsWindow **aWindow)
       {
         // prevent drawing while destroying
         if (!sDrawing) {
+          // workaround for sdl bug https://github.com/libsdl-org/SDL/issues/12797
           MutexAutoLock lock(nsAppShell::gAppShell->mEventsMutex);
+          MutexAutoLock wakeupLock(nsAppShell::gAppShell->mWakeupMutex);
           // late-destroy scheduled windows after opening any new window
           // internal wakeup_window pointer should be updated here, so this should help from crashing
           nsTArray<SDL_Window*> arr = mozilla::Move(nsAppShell::gAppShell->mDestroyedWindows);
@@ -1344,6 +1346,15 @@ bool nsWindow::PreprocessEvent(SDL_Event *ev, nsWindow **aWindow)
           for (uint32_t i = 0; i < arr.Length(); ++i) {
             SDL_DestroyWindow(arr[i]);
           }
+          // push some event to ensure wakeup_window updated before other threads reading it
+          SDL_Event user_event;
+          SDL_zero(user_event);
+          user_event.type = SDL_USEREVENT;
+          user_event.user.code = APPSHELL_SDL_NOTIFY_UI;
+          user_event.user.data1 = NULL;
+          user_event.user.data2 = NULL;
+
+          SDL_PushEvent(&user_event);
         }
         break;
       }

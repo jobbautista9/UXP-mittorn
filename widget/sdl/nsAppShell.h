@@ -56,6 +56,7 @@ public:
   // resize events may destroy SDL surface, so lock this during
   // rendering/resize/PumpEvents
   mozilla::Mutex mEventsMutex;
+  mozilla::Mutex mWakeupMutex;
   nsTArray<InvalidWindow> mInvalidWindows;
   nsTArray<nsWindow *> mTopLevelWindows;
   nsTArray<SDL_Window *> mDestroyedWindows;

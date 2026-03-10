@@ -20,6 +20,7 @@ int nsAppShell::sForcedFullscreen = -1;
 
 
 static void NotifySDLThread(int code) {
+  mozilla::MutexAutoLock lock(nsAppShell::gAppShell->mWakeupMutex);
   SDL_Event user_event;
   SDL_zero(user_event); /* SDL will copy this entire struct! Initialize to keep
                            memory checkers happy. */
@@ -127,6 +128,7 @@ nsAppShell::ResumeNative(void) {
 
 nsAppShell::nsAppShell()
   : mEventsMutex("AppShell.EventsMutex")
+  , mWakeupMutex("AppShell.WakeupMutex")
   , mNotifyMutex("AppShell.NotifyMutex")
   , mNotifyCondVar(mNotifyMutex, "AppShell.NotifyCondVar")
   , mNativeEventCount(0)
