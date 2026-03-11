@@ -386,4 +386,18 @@ void NotifyEvent() {
   NotifySDLThread(APPSHELL_SDL_NOTIFY_UI);
 }
 
+SDL_Window* CreateOffscreenSDLWindow() {
+  SDL_Window *ret = nullptr;
+  nsAppShell::DispatchToSDLThread([&ret] {
+   ret = SDL_CreateWindow("GLContextSDL", 0, 0, 100, 100, SDL_WINDOW_HIDDEN | SDL_WINDOW_OPENGL);
+  });
+  return ret;
+}
+
+void DestroyOffscreenSDLWindow(SDL_Window *aWin) {
+  nsAppShell::DispatchToSDLThread([aWin] {
+    nsAppShell::gAppShell->mDestroyedWindows.AppendElement(aWin);
+  }, false);
+}
+
 } // namespace mozilla

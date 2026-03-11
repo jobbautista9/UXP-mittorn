@@ -11,6 +11,12 @@
 #include <SDL.h>
 
 namespace mozilla {
+// nsAppShell.cpp
+SDL_Window* CreateOffscreenSDLWindow();
+
+void DestroyOffscreenSDLWindow(SDL_Window *aWin);
+
+
 namespace gl {
 
 using namespace mozilla::gfx;
@@ -36,7 +42,7 @@ public:
   ~GLContextSDL() {
     MarkDestroyed();
     if (mOffscreen && mWnd) {
-      SDL_DestroyWindow(mWnd);
+      DestroyOffscreenSDLWindow(mWnd);
     }
   }
 
@@ -179,8 +185,7 @@ static already_AddRefed<GLContextSDL> CreateWindowOffscreenContext() {
   SDL_GL_SetAttribute(SDL_GL_CONTEXT_RESET_NOTIFICATION, SDL_TRUE);
   SDL_GL_SetAttribute(SDL_GL_CONTEXT_FLAGS, SDL_GL_CONTEXT_ROBUST_ACCESS_FLAG);
   // this will break if sdl driver does not support hidden windows
-  SDL_Window *win = SDL_CreateWindow("GLContextSDL", 0, 0, 100, 100,
-                                     SDL_WINDOW_HIDDEN | SDL_WINDOW_OPENGL);
+  SDL_Window *win = CreateOffscreenSDLWindow();
   if (!win) {
     return nullptr;
   }
