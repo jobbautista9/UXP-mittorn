@@ -42,7 +42,6 @@ NS_IMPL_ISUPPORTS_INHERITED0(nsWindow, Inherited)
 nsWindow::nsWindow()
   : mNativeWindow(nullptr)
   , mVisible(false)
-  , mScheduleResize(false)
   , mRotation(ROTATION_0)
   , mParent(nullptr)
   , mDrawableSize(0,0)
@@ -86,6 +85,10 @@ nsWindow::Create(nsIWidget* aParent,
        (void *)this, (void *)aParent, (void *)aNativeParent, aRect.x, aRect.y, aRect.width, aRect.height);
   nsWindow *parent = (nsWindow *)aParent;
   mBounds = aRect;
+  if (nsAppShell::GetForcedFullscreen() > 0) {
+    mBounds.x = 0;
+    mBounds.y = 0;
+  }
   // Set defaults which can be overriden from aInitData in BaseCreate
   mWindowType = eWindowType_toplevel;
   mBorderStyle = eBorderStyle_default;
@@ -116,12 +119,12 @@ nsWindow::Create(nsIWidget* aParent,
     }
 
     // motor
-    nsAppShell::DispatchToSDLThread([this, aRect, &flags, &parent, aNativeParent] {
+    nsAppShell::DispatchToSDLThread([this, &flags, &parent, aNativeParent] {
 
-      mNativeWindow = SDL_CreateWindow("UXP", aRect.x, aRect.y, aRect.width, aRect.height, flags);
+      mNativeWindow = SDL_CreateWindow("UXP", mBounds.x, mBounds.y, mBounds.width, mBounds.height, flags);
       if (!mNativeWindow) { // if it's failed, reset opengl flag and retry
         flags &= ~SDL_WINDOW_OPENGL;
-        mNativeWindow = SDL_CreateWindow("UXP", aRect.x, aRect.y, aRect.width, aRect.height, flags);
+        mNativeWindow = SDL_CreateWindow("UXP", mBounds.x, mBounds.y, mBounds.width, mBounds.height, flags);
       }
       SDL_SetWindowData(mNativeWindow, "nsWindow", this);
       // set parent from native parent
@@ -262,7 +265,7 @@ nsWindow::Show(bool aState)
     }
   });
   if (mVisible) {
-    ScheduleResize();
+    ScheduleResize(mBounds.width, mBounds.height);
   }
 
   return NS_OK;
@@ -271,8 +274,14 @@ nsWindow::Show(bool aState)
 NS_IMETHODIMP
 nsWindow::Move(double aX, double aY)
 {
-  mBounds.x = aX;
-  mBounds.y = aY;
+  if (nsAppShell::GetForcedFullscreen() > 0) {
+    aX = 0.0;
+    aY = 0.0;
+  }
+  bool isMoving = (mBounds.x != aX || mBounds.y != aY);
+  if (isMoving) {
+    return NS_OK;
+  }
   if (mNativeWindow) {
     SDL_Window *win = mNativeWindow;
     nsAppShell::DispatchToSDLThread([win, aX, aY]{
@@ -280,7 +289,11 @@ nsWindow::Move(double aX, double aY)
     }, false);
   }
 
-  ReportMoveEvent();
+  if (!mVisible || !mNativeWindow) {
+    mBounds.x = aX;
+    mBounds.y = aY;
+    ReportMoveEvent();
+  }
   return NS_OK;
 }
 
@@ -289,6 +302,10 @@ nsWindow::Resize(double aX, double aY,
                  double aWidth, double aHeight,
                  bool aRepaint)
 {
+  if (nsAppShell::GetForcedFullscreen() > 0) {
+    aX = 0.0;
+    aY = 0.0;
+  }
   bool isMoving = (mBounds.x != aX || mBounds.y != aY);
   bool isResizing = (mBounds.width != aWidth || mBounds.height != aHeight);
   if ((!isMoving && !isResizing)) {
@@ -296,8 +313,6 @@ nsWindow::Resize(double aX, double aY,
   }
 
   if (isMoving) {
-    mBounds.x = aX;
-    mBounds.y = aY;
 
     if (mNativeWindow) {
       SDL_Window *win = mNativeWindow;
@@ -307,20 +322,23 @@ nsWindow::Resize(double aX, double aY,
     }
   }
   if (isResizing) {
-    mBounds.width = aWidth;
-    mBounds.height = aHeight;
 
     if (mNativeWindow) {
-      ScheduleResize();
+      ScheduleResize(aWidth, aHeight);
     }
   }
 
-  if (isMoving) {
-    ReportMoveEvent();
-  }
-
-  if (isResizing) {
-    ReportSizeEvent();
+  if (!mVisible || !mNativeWindow) {
+    if (isMoving) {
+      mBounds.x = aX;
+      mBounds.y = aY;
+      ReportMoveEvent();
+    }
+    if (isResizing) {
+      mBounds.width = aWidth;
+      mBounds.height = aHeight;
+      ReportSizeEvent();
+    }
   }
 
   return NS_OK;
@@ -332,13 +350,15 @@ NS_IMETHODIMP nsWindow::Resize(double aWidth, double aHeight, bool aRepaint)
     return NS_OK;
   }
 
-  mBounds.width = aWidth;
-  mBounds.height = aHeight;
   if (mNativeWindow) {
-    ScheduleResize();
+    ScheduleResize(aWidth, aHeight);
   }
 
-  ReportSizeEvent();
+  if(!mVisible || !mNativeWindow) {
+    mBounds.width = aWidth;
+    mBounds.height = aHeight;
+    ReportSizeEvent();
+  }
 
   return NS_OK;
 }
@@ -361,10 +381,10 @@ nsWindow::SetSizeMode(nsSizeMode aMode)
 /*
  * resize is very slow on SDL/X11, so accumulate resize request
  * to call actual resize once */
-void nsWindow::ScheduleResize()
+void nsWindow::ScheduleResize(int aWidth, int aHeight)
 {
   if (nsAppShell::GetForcedFullscreen() > 0) {
-    if (!mDrawableSize.width && mVisible) {
+    if (mVisible) {
       nsAppShell::DispatchToSDLThread([this]{
         SDL_SetWindowFullscreen(mNativeWindow, SDL_WINDOW_FULLSCREEN_DESKTOP);
         SDL_PumpEvents();
@@ -384,14 +404,10 @@ void nsWindow::ScheduleResize()
     }
     return;
   }
-  printf("ScheduleResize %d %d\n",mBounds.width, mBounds.height);
-  mScheduleResize = true;
-  for (uint32_t i = 0; i < nsAppShell::gAppShell->mInvalidWindows.Length(); ++i) {
-    if(nsAppShell::gAppShell->mInvalidWindows[i].window == this) {
-      return;
-    }
-  }
-  nsAppShell::gAppShell->mInvalidWindows.AppendElement(InvalidWindow{LayoutDeviceIntRegion(), this});
+
+  nsAppShell::DispatchToSDLThread([this, aWidth, aHeight]{
+    SDL_SetWindowSize(mNativeWindow, aWidth, aHeight);
+  }, false);
 }
 
 NS_IMETHODIMP
@@ -743,25 +759,7 @@ void nsWindow::HandleInvalidWindows()
 {
   nsTArray<InvalidWindow> windows = mozilla::Move(nsAppShell::gAppShell->mInvalidWindows);
   for (uint32_t i = 0; i < windows.Length(); ++i) {
-    nsWindow *w = windows[i].window;
-
-    // todo: ScheduleResize was not intended for separate thread, refactor this...
-    if (w->mScheduleResize && !sDrawing) {
-      nsAppShell::DispatchToSDLThread([w]{
-        if (sDrawing)
-          return;
-        MutexAutoLock lock(nsAppShell::gAppShell->mEventsMutex);
-        // first, apply actual size
-        SDL_SetWindowSize(w->mNativeWindow, w->mBounds.width, w->mBounds.height);
-        SDL_PumpEvents();
-        // ensure bounds before drawing
-        SDL_GetWindowSize(w->mNativeWindow, &w->mBounds.width, &w->mBounds.height);
-        w->mDisplayIndex = SDL_GetWindowDisplayIndex(w->mNativeWindow);
-        w->mScheduleResize = false;
-      });
-    }
-
-    w->ExposeRegion(windows[i].region);
+    windows[i].window->ExposeRegion(windows[i].region);
   }
 
   if (!sDragWindow) {
@@ -1327,9 +1325,7 @@ bool nsWindow::PreprocessEvent(SDL_Event *ev, nsWindow **aWindow)
         SDL_GetWindowSize(win, &width, &height);
         w->mDisplayIndex = SDL_GetWindowDisplayIndex(win);
         return nsAppShell::PostToMainThread(ev,[w, width, height] {
-          if  (!w->mScheduleResize) {
-            w->HandleResize(width, height);
-          }
+          w->HandleResize(width, height);
         });
       }
       case SDL_WINDOWEVENT_SHOWN:

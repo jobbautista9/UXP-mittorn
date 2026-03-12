@@ -103,7 +103,6 @@ protected:
   SDL_Surface *mSurface;
   void *mPlatformWindow;
   bool mVisible;
-  bool mScheduleResize;
   uint16_t mDisplayIndex;
   uint32_t mRotation;
   nsTArray<nsWindow *> mChildren;
@@ -113,7 +112,7 @@ protected:
 
   void OnSizeChanged(const mozilla::gfx::IntSize &aSize);
   void ExposeRegion(LayoutDeviceIntRegion);
-  void ScheduleResize();
+  void ScheduleResize(int aWidth, int aHeight);
   void HandleResize(int aWidth, int aHeight);
   LayoutDeviceIntPoint TransformCoord(int aX, int aY);
   LayoutDeviceIntSize mDrawableSize;
