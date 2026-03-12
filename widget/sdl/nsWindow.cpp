@@ -89,13 +89,18 @@ nsWindow::Create(nsIWidget* aParent,
     mBounds.x = 0;
     mBounds.y = 0;
   }
+  nsIWidget *baseParent = aInitData &&
+      (aInitData->mWindowType == eWindowType_dialog ||
+       aInitData->mWindowType == eWindowType_toplevel ||
+       aInitData->mWindowType == eWindowType_invisible) ?
+      nullptr : aParent;
   // Set defaults which can be overriden from aInitData in BaseCreate
   mWindowType = eWindowType_toplevel;
   mBorderStyle = eBorderStyle_default;
   if (parent) {
     mWindowType = eWindowType_child;
   }
-  Inherited::BaseCreate(aParent, aInitData);
+  Inherited::BaseCreate(baseParent, aInitData);
 
   // only create window for toplevel widget
   if (IsTopLevel()) {
