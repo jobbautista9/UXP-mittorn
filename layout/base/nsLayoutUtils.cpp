@@ -3158,6 +3158,19 @@ nsLayoutUtils::GetFrameForPoint(nsIFrame* aFrame, nsPoint aPt, uint32_t aFlags)
   return outFrames.Length() ? outFrames.ElementAt(0) : nullptr;
 }
 
+static void BuildPopupDisplayList(nsView *view, nsDisplayListBuilder* aBuilder, nsDisplayList* aList)
+{
+  for (nsView* v = view->GetFirstChild(); v; v = v->GetNextSibling()) {
+    if (!v->HasWidget() && v->GetVisibility() == nsViewVisibility_kShow) {
+      BuildPopupDisplayList(v, aBuilder, aList);
+      nsIFrame *frame = v->GetFrame();
+      if (frame && nsLayoutUtils::IsPopup(frame)) {
+        frame->BuildDisplayListForStackingContext(aBuilder, aList);
+      }
+    }
+  }
+}
+
 nsresult
 nsLayoutUtils::GetFramesForArea(nsIFrame* aFrame, const nsRect& aRect,
                                 nsTArray<nsIFrame*> &aOutFrames,
@@ -3189,6 +3202,11 @@ nsLayoutUtils::GetFramesForArea(nsIFrame* aFrame, const nsRect& aRect,
   builder.EnterPresShell(aFrame);
   builder.SetDirtyRect(aRect);
   aFrame->BuildDisplayListForStackingContext(&builder, &list);
+  if (sFakePopupsVisible) {
+    nsView *view = aFrame->GetView();
+    if(view && view->HasWidget())
+      BuildPopupDisplayList(view, &builder, &list);
+  }
   builder.LeavePresShell(aFrame, nullptr);
 
 #ifdef MOZ_DUMP_PAINTING
@@ -3387,19 +3405,6 @@ nsLayoutUtils::ExpireDisplayPortOnAsyncScrollableAncestor(nsIFrame* aFrame)
       // it will call this function again to trigger the next ancestor up the
       // chain.
       break;
-    }
-  }
-}
-
-static void BuildPopupDisplayList(nsView *view, nsDisplayListBuilder* aBuilder, nsDisplayList* aList)
-{
-  for (nsView* v = view->GetFirstChild(); v; v = v->GetNextSibling()) {
-    if (!v->HasWidget() && v->GetVisibility() == nsViewVisibility_kShow) {
-      BuildPopupDisplayList(v, aBuilder, aList);
-      nsIFrame *frame = v->GetFrame();
-      if (frame && nsLayoutUtils::IsPopup(frame)) {
-        frame->BuildDisplayListForStackingContext(aBuilder, aList);
-      }
     }
   }
 }
