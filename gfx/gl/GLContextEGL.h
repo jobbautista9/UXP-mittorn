@@ -131,6 +131,7 @@ protected:
     bool mCanBindToTexture;
     bool mShareWithEGLImage;
     bool mOwnsContext;
+    bool mNoSurface;
 
     static EGLSurface CreatePBufferSurfaceTryingPowerOfTwo(EGLConfig config,
                                                            EGLenum bindToTextureFormat,

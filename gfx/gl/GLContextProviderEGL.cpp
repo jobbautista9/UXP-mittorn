@@ -184,6 +184,7 @@ GLContextEGL::GLContextEGL(CreateContextFlags flags, const SurfaceCaps& caps,
     , mCanBindToTexture(false)
     , mShareWithEGLImage(false)
     , mOwnsContext(true)
+    , mNoSurface(surface == EGL_NO_SURFACE)
 {
     // any EGL contexts will always be GLESv2
     SetProfileVersion(ContextProfile::OpenGLES, 200);
@@ -324,7 +325,7 @@ GLContextEGL::MakeCurrentImpl(bool aForce) {
         EGLSurface surface = mSurfaceOverride != EGL_NO_SURFACE
                               ? mSurfaceOverride
                               : mSurface;
-        if (surface == EGL_NO_SURFACE) {
+        if (surface == EGL_NO_SURFACE && !mNoSurface) {
             return false;
         }
         succeeded = sEGLLibrary.fMakeCurrent(EGL_DISPLAY(),
@@ -903,8 +904,22 @@ GLContextProviderEGL::CreateHeadless(CreateContextFlags flags,
 {
     mozilla::gfx::IntSize dummySize = mozilla::gfx::IntSize(16, 16);
     SurfaceCaps dummyCaps = SurfaceCaps::Any();
-    return GLContextEGL::CreateEGLPBufferOffscreenContext(flags, dummySize, dummyCaps,
-                                                          out_failureId);
+    RefPtr<GLContextEGL> gl = GLContextEGL::CreateEGLPBufferOffscreenContext(flags, dummySize,
+                                                                             dummyCaps, out_failureId);
+    if (!gl) {
+      EGLConfig configs[1];
+      EGLint ncfg = ArrayLength(configs);
+      if (!sEGLLibrary.fChooseConfig(EGL_DISPLAY(), kEGLConfigAttribsRGB24, configs, ncfg, &ncfg)) {
+        return nullptr;
+      }
+      SurfaceCaps caps = SurfaceCaps::Any();
+      gl = GLContextEGL::CreateGLContext(flags, caps, nullptr, true, configs[0],
+                                         LOCAL_EGL_NO_SURFACE, out_failureId);
+    }
+    if (!gl) {
+      return nullptr;
+    }
+    return gl.forget();
 }
 
 // Under EGL, on Android, pbuffers are supported fine, though
