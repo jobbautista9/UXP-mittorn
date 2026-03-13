@@ -115,7 +115,7 @@ CompositorOGL::CreateContext()
     return already_AddRefed<GLContext>(alreadyRefed);
   }
 
-#ifdef XP_WIN
+#if defined(XP_WIN) || defined(MOZ_WIDGET_SDL)
   if (gfxEnv::LayersPreferEGL()) {
     printf_stderr("Trying GL layers...\n");
     context = gl::GLContextProviderEGL::CreateForCompositorWidget(mWidget, false);
