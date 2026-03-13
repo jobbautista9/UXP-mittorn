@@ -255,9 +255,8 @@ bool nsAppShell::ProcessNextNativeEvent(bool aMayWait) {
   }
 
   // fast path for LAYERS_BASIC (before waiting event)
-  if (mEventloopNestingLevel <= 1) {
-    nsWindow::HandleInvalidWindows();
-  }
+  nsWindow::HandleInvalidWindows();
+
   if (mSeparateEventThread) {
     bool ret = false;
     // we do not have any platform events in this thread. so only wait on CondVar
@@ -270,34 +269,28 @@ bool nsAppShell::ProcessNextNativeEvent(bool aMayWait) {
 
     unsigned short cnt = mNativeEventCount;
     mNativeEventCount = 0;
-    mozilla::LinkedList<EventListElement> queue;
-    if (mEventloopNestingLevel <= 1) {
-      queue = Move(mQueue);
-    }
-
+    mozilla::LinkedList<EventListElement> queue = Move(mQueue);
     mNotifyMutex.Unlock();
 
     while (cnt--) {
       NativeEventCallback();
       ret = true;
     }
-    // do not process SDL events in nested loops to not deal with recursive event callback calls
-    if (mEventloopNestingLevel <= 1) {
-      while (!queue.isEmpty()) {
-        mozilla::UniquePtr<EventListElement> ev(queue.popFirst());
-        if (ev->mWindow) {
-          ev->mWindow->OnEvent(&ev->mEvent);
-        }
-        else if (ev->mEvent.type == SDL_USEREVENT && ev->mEvent.user.code == APPSHELL_SDL_RUNNABLE_CB) {
-          nsIRunnable *runnable = (nsIRunnable*)ev->mEvent.user.data1;
-          runnable->Run();
-          runnable->Release();
-        }
-        ret = true;
-      }
 
-      nsWindow::HandleInvalidWindows();
+    while (!queue.isEmpty()) {
+      mozilla::UniquePtr<EventListElement> ev(queue.popFirst());
+      if (ev->mWindow) {
+        ev->mWindow->OnEvent(&ev->mEvent);
+      }
+      else if (ev->mEvent.type == SDL_USEREVENT && ev->mEvent.user.code == APPSHELL_SDL_RUNNABLE_CB) {
+        nsIRunnable *runnable = (nsIRunnable*)ev->mEvent.user.data1;
+        runnable->Run();
+        runnable->Release();
+      }
+      ret = true;
     }
+
+    nsWindow::HandleInvalidWindows();
     return ret;
   }
 
@@ -324,9 +317,7 @@ bool nsAppShell::ProcessNextNativeEvent(bool aMayWait) {
     }
   } while (PollSDLEvent(&ev));
   // handle invalidated during SDL_WINDOWEVENT_EXPOSE
-  if (mEventloopNestingLevel <= 1) {
-    nsWindow::HandleInvalidWindows();
-  }
+  nsWindow::HandleInvalidWindows();
   return true;
 }
 
