@@ -8,6 +8,7 @@
 #include "mozilla/widget/CompositorWidget.h"
 #include "nsDebug.h"
 #include "nsIWidget.h"
+#include "prenv.h"
 #include <SDL.h>
 
 namespace mozilla {
@@ -26,17 +27,20 @@ class GLContextSDL : public GLContext {
 public:
   MOZ_DECLARE_REFCOUNTED_VIRTUAL_TYPENAME(GLContextSDL, override)
   // From Window: (possibly for offscreen!)
-  GLContextSDL(CreateContextFlags flags, const SurfaceCaps &caps,
-               bool robustness, bool isOffscreen, SDL_GLContext aContext,
-               SDL_Window *aWindow)
-      : GLContext(flags, caps, nullptr, isOffscreen)
-    , mContext(aContext)
-    , mWnd(aWindow)
-    , mIsDoubleBuffered(false)
-    , mHasRobustness(robustness)
-    , mOffscreen(isOffscreen) {
-    // initialize compatibility profile for now
-    SetProfileVersion(ContextProfile::OpenGLCompatibility, 200);
+  GLContextSDL(CreateContextFlags aFlags, const SurfaceCaps &aCaps,
+               bool aRobustness, bool aOffscreen, bool aGles, 
+               bool aDoubleBuffer, SDL_GLContext aContext, SDL_Window *aWindow)
+      : GLContext(aFlags, aCaps, nullptr, aOffscreen)
+      , mContext(aContext)
+      , mWnd(aWindow)
+      , mIsDoubleBuffered(aDoubleBuffer)
+      , mHasRobustness(aRobustness)
+      , mOffscreen(aOffscreen) {
+    if (aGles) {
+      SetProfileVersion(ContextProfile::OpenGLES, 200);
+    } else {
+      SetProfileVersion(ContextProfile::OpenGLCompatibility, 200);
+    }
   }
 
   ~GLContextSDL() {
@@ -61,7 +65,7 @@ public:
     }
 
     SetupLookupFunction();
-    return InitWithPrefix("gl", false);
+    return InitWithPrefix("gl", true);
   }
 
   virtual bool MakeCurrentImpl(bool aForce) override {
@@ -140,34 +144,103 @@ already_AddRefed<GLContext> GLContextProviderSDL::CreateForCompositorWidget(
   return CreateForWindow(aCompositorWidget->RealWidget(), aForceAccelerated);
 }
 
-already_AddRefed<GLContext>
-GLContextProviderSDL::CreateForWindow(nsIWidget *aWidget, bool aForceAccelerated) {
+// SDL attributes stored in video driver private data, shared across threads
+static SDL_mutex *sContextMutex;
+static bool sOnlyGLES = false;
+
+static SDL_GLContext CreateContext(bool aRobustness, bool aGles, bool aDoubleBuffer, bool aForceAccelerated, SDL_Window *aWin) {
+  if (!sContextMutex) {
+    sContextMutex = SDL_CreateMutex();
+    sOnlyGLES = PR_GetEnv("MOZ_SDL_FORCE_GLES");
+  }
+  if (!aGles && sOnlyGLES) {
+    return nullptr;
+  }
+  SDL_LockMutex(sContextMutex);
   SDL_GL_ResetAttributes();
+  SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, (SDL_bool)aDoubleBuffer);
 
   if (aForceAccelerated) {
     SDL_GL_SetAttribute(SDL_GL_ACCELERATED_VISUAL, SDL_TRUE);
   }
 
-  SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, SDL_TRUE);
-  bool hasRobustness = true;
-  SDL_GL_SetAttribute(SDL_GL_CONTEXT_RESET_NOTIFICATION, SDL_TRUE);
-  SDL_GL_SetAttribute(SDL_GL_CONTEXT_FLAGS, SDL_GL_CONTEXT_ROBUST_ACCESS_FLAG);
+  if (aRobustness) {
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_RESET_NOTIFICATION, SDL_TRUE);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_FLAGS, SDL_GL_CONTEXT_ROBUST_ACCESS_FLAG);
+  }
 
+  if (aGles) {
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_ES);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 2);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 0);
+  } else {
+    // set some defaults to prevent SDL defaulting to GLES when gl is disabled
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, 0);
+    // todo: what is minimum supported GL version?
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 1);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 2);
+  }
+
+  SDL_GLContext ret = SDL_GL_CreateContext(aWin);
+  int profile = -1, minor = -1, major = -1;
+  SDL_GL_GetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, &profile);
+  SDL_GL_GetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, &major);
+  SDL_GL_GetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, &minor);
+
+  // ignore gles without gles profile
+  if (ret && !aGles && profile == SDL_GL_CONTEXT_PROFILE_ES) {
+    NS_WARNING("SDL selected wrong GL profile");
+    SDL_GL_DeleteContext(ret);
+    ret = nullptr;
+  }
+  // ignore gles1
+  if (ret && aGles && major < 2) {
+    NS_WARNING("SDL selected unsupported GLES version");
+    SDL_GL_DeleteContext(ret);
+    ret = nullptr;
+  }
+  if (ret) {
+    // never trust context that is created by SDL, it may successfuly create broken context
+    typedef GLubyte* (GLAPIENTRY * PFNGLGETSTRINGPROC) (GLenum);
+    PFNGLGETSTRINGPROC fGetString = (PFNGLGETSTRINGPROC)SDL_GL_GetProcAddress("glGetString");
+
+    if (!fGetString || !fGetString(LOCAL_GL_SHADING_LANGUAGE_VERSION)) {
+      NS_WARNING("SDL created invalid context");
+      SDL_GL_DeleteContext(ret);
+      ret = nullptr;
+    }
+  }
+
+  SDL_UnlockMutex(sContextMutex);
+  return ret;
+}
+
+already_AddRefed<GLContext>
+GLContextProviderSDL::CreateForWindow(nsIWidget *aWidget,
+                                      bool aForceAccelerated)
+{
+  bool hasRobustness = true;
+  bool gles = false;
   SDL_Window *win = (SDL_Window *)aWidget->GetNativeData(NS_NATIVE_WIDGET);
-  SDL_GLContext context = SDL_GL_CreateContext(win);
+  SDL_GLContext context = CreateContext(hasRobustness, gles, true, aForceAccelerated, win);
+  if (!context) {
+    hasRobustness = false;
+    context = CreateContext(hasRobustness, gles, true, aForceAccelerated, win);
+  }
+  if (!context) {
+    gles = true;
+    context = CreateContext(hasRobustness, gles, true, aForceAccelerated, win);
+  }
 
   NS_ASSERTION(context, SDL_GetError());
 
   if (!context) {
     return nullptr;
   }
-  SDL_GLcontextFlag flags;
-  SDL_GL_GetAttribute(SDL_GL_CONTEXT_FLAGS, (int *)&flags);
-  hasRobustness = !!(flags & SDL_GL_CONTEXT_ROBUST_ACCESS_FLAG);
 
   SurfaceCaps caps = SurfaceCaps::ForRGBA();
   RefPtr<GLContextSDL> glContext = new GLContextSDL(
-      CreateContextFlags::NONE, caps, hasRobustness, false, context, win);
+      CreateContextFlags::NONE, caps, hasRobustness, false, gles, true, context, win);
   if (!glContext->Init()) {
     return nullptr;
   }
@@ -178,30 +251,46 @@ GLContextProviderSDL::CreateForWindow(nsIWidget *aWidget, bool aForceAccelerated
   return glContext.forget();
 }
 
-static already_AddRefed<GLContextSDL> CreateWindowOffscreenContext() {
-  SDL_GL_ResetAttributes();
-  SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, SDL_FALSE);
+static already_AddRefed<GLContextSDL> CreateWindowOffscreenContext()
+{
   bool hasRobustness = true;
-  SDL_GL_SetAttribute(SDL_GL_CONTEXT_RESET_NOTIFICATION, SDL_TRUE);
-  SDL_GL_SetAttribute(SDL_GL_CONTEXT_FLAGS, SDL_GL_CONTEXT_ROBUST_ACCESS_FLAG);
-  // this will break if sdl driver does not support hidden windows
+  bool doubleBuffer = false;
+  bool gles = false;
   SDL_Window *win = CreateOffscreenSDLWindow();
+
   if (!win) {
     return nullptr;
   }
+  SDL_GLContext context = CreateContext(hasRobustness, gles, doubleBuffer, false, win);
+  if (!context) {
+    hasRobustness = false;
+    context = CreateContext(hasRobustness, gles, doubleBuffer, false, win);
+  }
 
-  SDL_GLContext context = SDL_GL_CreateContext(win);
+  if (!context) {
+    doubleBuffer = true;
+    context = CreateContext(hasRobustness, gles, doubleBuffer, false, win);
+  }
+
+  if (!context) {
+    gles = true;
+    doubleBuffer = false;
+    context = CreateContext(hasRobustness, gles, doubleBuffer, false, win);
+  }
+
+  if (!context) {
+    doubleBuffer = true;
+    context = CreateContext(hasRobustness, gles, doubleBuffer, false, win);
+  }
+
   NS_ASSERTION(context, SDL_GetError());
   if (!context) {
     return nullptr;
   }
-  SDL_GLcontextFlag flags;
-  SDL_GL_GetAttribute(SDL_GL_CONTEXT_FLAGS, (int *)&flags);
-  hasRobustness = !!(flags & SDL_GL_CONTEXT_ROBUST_ACCESS_FLAG);
 
   SurfaceCaps caps = SurfaceCaps::ForRGBA();
   RefPtr<GLContextSDL> glContext = new GLContextSDL(
-      CreateContextFlags::NONE, caps, hasRobustness, true, context, win);
+      CreateContextFlags::NONE, caps, hasRobustness, true, gles, doubleBuffer, context, win);
   return glContext.forget();
 }
 
@@ -239,7 +328,12 @@ GLContextProviderSDL::CreateHeadless(CreateContextFlags flags, nsACString *const
   return nullptr;
 }
 
-/*static*/ void GLContextProviderSDL::Shutdown() {}
+/*static*/ void GLContextProviderSDL::Shutdown() {
+  if (sContextMutex) {
+    SDL_DestroyMutex(sContextMutex);
+    sContextMutex = nullptr;
+  }
+}
 
 } /* namespace gl */
 } /* namespace mozilla */
