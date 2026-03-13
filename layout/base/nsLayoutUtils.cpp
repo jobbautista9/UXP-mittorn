@@ -3160,14 +3160,19 @@ nsLayoutUtils::GetFrameForPoint(nsIFrame* aFrame, nsPoint aPt, uint32_t aFlags)
 
 static void BuildPopupDisplayList(nsView *view, nsDisplayListBuilder* aBuilder, nsDisplayList* aList)
 {
+  nsTArray<nsIFrame*> popups;
   for (nsView* v = view->GetFirstChild(); v; v = v->GetNextSibling()) {
     if (!v->HasWidget() && v->GetVisibility() == nsViewVisibility_kShow) {
       BuildPopupDisplayList(v, aBuilder, aList);
       nsIFrame *frame = v->GetFrame();
       if (frame && nsLayoutUtils::IsPopup(frame)) {
-        frame->BuildDisplayListForStackingContext(aBuilder, aList);
+        popups.AppendElement(frame);
       }
     }
+  }
+  for (int i = (int)popups.Length() - 1; i >= 0; i--) {
+    nsIFrame* popup = popups[i];
+    popup->BuildDisplayListForStackingContext(aBuilder, aList);
   }
 }
 
