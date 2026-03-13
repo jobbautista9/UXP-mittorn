@@ -10,6 +10,7 @@
 #include "nsIWidget.h"
 #include "prenv.h"
 #include <SDL.h>
+#include "GLLibraryEGL.h"
 
 namespace mozilla {
 // nsAppShell.cpp
@@ -221,6 +222,12 @@ GLContextProviderSDL::CreateForWindow(nsIWidget *aWidget,
 {
   bool hasRobustness = true;
   bool gles = false;
+
+  sEGLLibrary.SetNativeDisplay((EGLNativeDisplayType)aWidget->GetNativeData(NS_NATIVE_DISPLAY));
+  sEGLLibrary.SetEGLPlatform((EGLenum)(uintptr_t)aWidget->GetNativeData(NS_NATIVE_EGL_PLATFORM));
+  sEGLLibrary.SetEGLPlatformAttribs(
+   (const EGLint*)aWidget->GetNativeData(NS_NATIVE_EGL_PLATFORM_DISPLAY_ATTRIB_LIST));
+
   SDL_Window *win = (SDL_Window *)aWidget->GetNativeData(NS_NATIVE_WIDGET);
   SDL_GLContext context = CreateContext(hasRobustness, gles, true, aForceAccelerated, win);
   if (!context) {
